@@ -4,7 +4,9 @@
   openai   —— 任何 OpenAI 兼容端点（/chat/completions）：本地 vLLM / Ollama /
               LM Studio / 各家云端 API。
   command  —— 任意命令行工具。提示词写成 {prompt_file}，输出读 {out_file}
-              （或读 stdout）。把你的 agent / CLI 接进来用这个。
+              （或读 stdout）。把你的 agent / CLI 接进来用这个，
+              也就是「一个任务一个子代理」的跑法：每个子代理独立上下文，
+              一片 / 一卷互不干扰。并发怎么开见 docs/PARALLEL.md。
 
 配置见 config/project.json 的 llm 段，或 docs/CONFIG.md。
 """

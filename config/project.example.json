@@ -32,9 +32,20 @@
     "concurrency": 16
   },
 
-  "_llm_command_示例": {
+  "_llm_子代理示例": {
     "backend": "command",
-    "command": "my-agent -p --no-session < {prompt_file} > {out_file}",
-    "concurrency": 8
+    "command": "my-agent -p --no-session --mode text --tools read,write < {prompt_file} > {out_file}",
+    "concurrency": 50,
+    "timeout": 1800,
+    "retries": 3,
+    "_说明": "一个子代理一片，各自独立上下文；只给 read,write，别给联网。并发数按你的额度定，实测 25-78 路可用。详见 docs/PARALLEL.md"
+  },
+
+  "_llm_云API示例": {
+    "backend": "openai",
+    "base_url": "https://api.example.com/v1",
+    "model": "your-model",
+    "concurrency": 16,
+    "_说明": "撞限流会自动退避重试，但速度会掉；先 --only 1,2,3 --par 8 试"
   }
 }

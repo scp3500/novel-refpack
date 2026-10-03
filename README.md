@@ -78,6 +78,35 @@ python stylefit/verify.py --text 稿子.txt --corpus chunks --out cache/mybook -
 
 `verify.py` 出四层结果：门槛（在不在范围内）、结构（自打乱比值）、逐句（字符 4-gram 的 z 值）、0 频探针（新造 4-gram 倍数）。
 
+## 并行：开几十路子代理
+
+摘要阶段是 **一片 = 一个独立任务**，彼此不看对方的输入，所以可以放心开到几十路：
+
+| 阶段 | 任务数 | 实测并发 |
+|---|---|---|
+| 一层摘要（每片一个） | = 片数（26 / 78 / 上百） | **25–78 路** |
+| 二层卷纪要（每卷一个） | = 卷数 | 30–35 路 |
+| 元章节（世界观/角色/势力…） | 6 个 | 6 路 |
+
+实测：114 万字 → 26 片 → 25 路并发；444 万字 → 78 片 → 76 路并发（`PAR=50` 排队）。
+
+```bash
+python scripts/02_run_notes.py --par 50       # 并发数直接传
+python scripts/02_run_notes.py --only 7,23    # 补跑指定片，已完成的自动跳过
+```
+
+用**子代理**跑（每个子代理一个独立上下文，上下文天然不被污染）：
+
+```jsonc
+"llm": {
+  "backend": "command",
+  "command": "my-agent -p --no-session --tools read,write < {prompt_file} > {out_file}",
+  "concurrency": 50, "timeout": 1800, "retries": 3
+}
+```
+
+细节、并发数怎么定、防止几十路跑歪的规则：见 [`docs/PARALLEL.md`](docs/PARALLEL.md)。
+
 ## 摘要任务用什么跑
 
 `config/project.json` 的 `llm` 段二选一：
@@ -99,6 +128,7 @@ B 模式就是给「不用某个特定 agent 的人」留的口子：只要你�
 ## 详细文档
 
 - 方法怎么设计、每一步为什么这么做：[`docs/WORKFLOW.md`](docs/WORKFLOW.md)
+- 并行与子代理：开多少路、怎么接、怎么防跑歪：[`docs/PARALLEL.md`](docs/PARALLEL.md)
 - 摘要模板和成品骨架：[`docs/TEMPLATES.md`](docs/TEMPLATES.md)
 - 常见坑与指标目标：[`docs/PITFALLS.md`](docs/PITFALLS.md)
 - 配置字段：[`docs/CONFIG.md`](docs/CONFIG.md)
