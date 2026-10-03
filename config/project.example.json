@@ -1,0 +1,40 @@
+{
+  "name": "mybook",
+  "source": "D:/books/mybook.epub",
+
+  "chunk_chars": 60000,
+  "quote_open": ["“", "「", "『"],
+  "quote_close": ["”", "」", "』"],
+  "person": "third",
+  "protagonist": "",
+  "vol_unit_word": "卷",
+
+  "names": ["主角", "女主", "配角甲", "配角乙"],
+
+  "drop_headings": ["简介", "制作信息", "封面及彩页"],
+
+  "hard_settings": [
+    "这里列 5-10 条不可改的世界观底线（谁是谁、能力规则、不能违反的因果）"
+  ],
+  "if_points": [
+    "某个可以改一笔就引发走向变化的节点：改什么 → 会怎样"
+  ],
+
+  "llm": {
+    "backend": "openai",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "model": "your-model",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "timeout": 600,
+    "retries": 3,
+    "concurrency": 16
+  },
+
+  "_llm_command_示例": {
+    "backend": "command",
+    "command": "my-agent -p --no-session < {prompt_file} > {out_file}",
+    "concurrency": 8
+  }
+}

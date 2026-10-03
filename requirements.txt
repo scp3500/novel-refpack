@@ -1,0 +1,8 @@
+# 全部脚本都可以只用 Python 标准库跑（3.9+）。
+#
+# 可选加速：
+#   pip install lxml
+#     —— epub 抽取走 lxml 解析，400 万字级文件快很多；不装则用标准库 html.parser
+#
+# 不需要 openai SDK：lib/llm.py 用 urllib 直接打 /chat/completions，
+# 任何 OpenAI 兼容端点（本地 vLLM / Ollama / LM Studio / 各家 API）都能用。
