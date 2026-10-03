@@ -1,18 +1,7 @@
-# 跑出来的东西不进版本库
-manifest.json
-volume_map.json
-attrib.json
-all_notes.md
-raw/
-chunks/
-notes/
-volumes/
-cache/
-logs/
-out/
+# 跑出来的数据全在 work/ 下，不进版本库
 work/
 
-# 项目配置（含本机路径 / 可能含 API key）
+# 项目配置（含本机路径，可能含 API key）
 config/project.json
 
 # Python

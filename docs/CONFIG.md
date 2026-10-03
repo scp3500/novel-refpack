@@ -63,7 +63,7 @@ REFPACK_MODEL=xxx REFPACK_BASE_URL=http://... REFPACK_CONCURRENCY=32 \
 
 ### paths 段
 
-默认 `raw/ chunks/ notes/ volumes/ cache/ out/ logs/`，相对仓库根。
+默认 `work/raw/ work/chunks/ work/notes/ work/volumes/ work/cache/ work/out/ work/logs/`，相对仓库根。
 
 ## config/stylefit/*.json
 

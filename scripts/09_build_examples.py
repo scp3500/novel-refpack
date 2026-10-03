@@ -39,7 +39,7 @@ def load_index(cfg):
 
 
 def read_pairs(cfg):
-    d = textio.read_json(os.path.join(ROOT, "attrib.json"), [])
+    d = textio.read_json(project.artifact(cfg, "attrib.json"), [])
     return [(x["who"], x["text"]) for x in (d or []) if isinstance(x, dict)
             and x.get("who") and x.get("text")]
 

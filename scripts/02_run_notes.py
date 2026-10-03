@@ -31,9 +31,9 @@ def main():
     a = ap.parse_args()
 
     cfg = project.load(a.config)
-    man = textio.read_json(os.path.join(ROOT, "manifest.json"), None)
+    man = textio.read_json(project.artifact(cfg, "manifest.json"), None)
     if not man:
-        raise SystemExit("先跑 scripts/01_split.py（缺 manifest.json）")
+        raise SystemExit("先跑 scripts/01_split.py（缺 work/manifest.json）")
 
     lcfg = dict(DEFAULTS)
     lcfg.update(cfg.get("llm") or {})

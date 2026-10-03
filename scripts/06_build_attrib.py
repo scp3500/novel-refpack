@@ -92,7 +92,7 @@ def main():
                 if len(q) >= 2:
                     pairs.append({"who": who, "text": q})
 
-    out = a.out or os.path.join(ROOT, "attrib.json")
+    out = a.out or project.artifact(cfg, "attrib.json")
     textio.write_json(out, pairs)
     c = Counter(p["who"] for p in pairs)
     print("归属：%d 条 ｜ 说话人 %d 个" % (len(pairs), len(c)))

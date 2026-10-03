@@ -77,12 +77,12 @@ def main():
         vols.append({"i": i + 1, "h1": h.get("h1", ""), "h2": h["title"],
                      "chars": len(body), "file": "volumes/" + fn, "chunks": ch})
 
-    textio.write_json(os.path.join(ROOT, "volume_map.json"), vols)
+    textio.write_json(project.artifact(cfg, "volume_map.json"), vols)
     print("卷数：%d ｜ 合计 %d 字" % (len(vols), sum(v["chars"] for v in vols)))
     for v in vols:
         print("%3d  %-10s %-34s %6d  %s" % (
             v["i"], (v["h1"] or "")[:10], v["h2"][:34], v["chars"], v["file"]))
-    print("→ volume_map.json")
+    print("→ work/volume_map.json")
     print("下一步：python scripts/05_run_volumes.py")
 
 

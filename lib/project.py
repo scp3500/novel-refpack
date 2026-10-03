@@ -25,14 +25,16 @@ DEFAULTS = {
     "protagonist": "",
     "vol_unit_word": "卷",          # 二层归纳的单位叫法：卷 / 章 / 篇 / ARC
     "llm": {},
+    # 所有跑出来的东西都在 work/ 下，工具目录保持干净
     "paths": {
-        "raw": "raw",
-        "chunks": "chunks",
-        "notes": "notes",
-        "volumes": "volumes",
-        "cache": "cache",
-        "out": "out",
-        "logs": "logs",
+        "work": "work",
+        "raw": "work/raw",
+        "chunks": "work/chunks",
+        "notes": "work/notes",
+        "volumes": "work/volumes",
+        "cache": "work/cache",
+        "out": "work/out",
+        "logs": "work/logs",
     },
 }
 
@@ -82,10 +84,9 @@ def load(path=None, need_source=False):
     return cfg
 
 
-def p(cfg, key, *parts):
-    """取配置里的目录并拼接子路径。p(cfg,'chunks','chunk_01.txt')"""
-    base = cfg["paths"][key]
-    return os.path.join(base, *parts) if parts else base
+def artifact(cfg, name):
+    """work/ 下的单个文件，如 manifest.json / attrib.json / all_notes.md。"""
+    return os.path.join(cfg["paths"]["work"], name)
 
 
 def prompt(cfg, stem, **kw):

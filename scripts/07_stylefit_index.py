@@ -31,7 +31,7 @@ def main():
     name = cfg.get("name") or "book"
     corpus = a.corpus or cfg["paths"]["chunks"]
     out = a.out or os.path.join(cfg["paths"]["cache"], name)
-    attrib = os.path.join(ROOT, "attrib.json")
+    attrib = project.artifact(cfg, "attrib.json")
     if a.no_attrib or not os.path.isfile(attrib):
         attrib = ""
     names = ",".join(cfg.get("names") or [])

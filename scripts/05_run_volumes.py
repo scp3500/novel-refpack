@@ -22,9 +22,9 @@ from lib.llm import DEFAULTS              # noqa: E402
 
 
 def build_volume_jobs(cfg):
-    vmap = textio.read_json(os.path.join(ROOT, "volume_map.json"), None)
+    vmap = textio.read_json(project.artifact(cfg, "volume_map.json"), None)
     if not vmap:
-        raise SystemExit("先跑 scripts/04_build_volume_map.py（缺 volume_map.json）")
+        raise SystemExit("先跑 scripts/04_build_volume_map.py（缺 work/volume_map.json）")
     notes = cfg["paths"]["notes"]
     outdir = os.path.join(notes, "vol")
     jobs = []
@@ -72,7 +72,7 @@ def digest(cfg, limit=60000):
                     keep.append(ln)
             src.append("### %s\n%s" % (os.path.basename(f), "\n".join(keep[:80])))
     else:
-        src = [textio.read_text(os.path.join(ROOT, "all_notes.md"))]
+        src = [textio.read_text(project.artifact(cfg, "all_notes.md"))]
     text = "\n\n".join(src)
     if len(text) > limit:
         text = text[:limit] + "\n\n…（后略）"

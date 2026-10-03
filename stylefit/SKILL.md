@@ -46,8 +46,8 @@ description: 从一部长篇语料（小说 / 剧本 / 任何成篇文本）里�
 ### 第一步 · 建索引
 
 ```bash
-python stylefit/build_index.py --corpus chunks --out cache/mybook \
-    [--attrib attrib.json] [--names 甲,乙,丙] [--config config/stylefit]
+python stylefit/build_index.py --corpus work/chunks --out work/cache/mybook \
+    [--attrib work/attrib.json] [--names 甲,乙,丙] [--config config/stylefit]
 ```
 
 归属文件可选（格式 `[{who,text}]` 或 `{who:[line]}`）。没有就用「名字+说话动词+引号」自动抓，准确度低一些。
@@ -57,7 +57,7 @@ python stylefit/build_index.py --corpus chunks --out cache/mybook \
 ### 第二步 · 写之前查
 
 ```bash
-python stylefit/query.py --index cache/mybook/index.json --colloc        # 全部搭配概念
+python stylefit/query.py --index work/cache/mybook/index.json --colloc        # 全部搭配概念
 python stylefit/query.py --index ... --colloc 耳朵的动作                 # 0 的那项就是雷区
 python stylefit/query.py --index ... --who 白夜 --func 让步接受          # 这个人在这种处境怎么说话
 python stylefit/query.py --index ... --why 脸红                          # 这个意图书里怎么写
@@ -76,7 +76,7 @@ python stylefit/query.py --index ... --stats                             # 统�
 ### 第四步 · 验收
 
 ```bash
-python stylefit/verify.py --text 稿.txt --corpus chunks --out cache/mybook \
+python stylefit/verify.py --text 稿.txt --corpus work/chunks --out work/cache/mybook \
     --ref-pattern '(关键词正则)'
 ```
 

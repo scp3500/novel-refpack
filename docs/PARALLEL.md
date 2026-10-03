@@ -8,7 +8,7 @@
 | 条件 | 这套流程怎么满足 |
 |---|---|
 | 任务之间没有依赖 | 一层摘要：一片一个任务，读完写自己的文件，谁也不看谁 |
-| 输入输出都落盘 | 输入是 `chunks/chunk_NN.txt`，输出是 `notes/chunk_NN.md`，路径唯一 |
+| 输入输出都落盘 | 输入是 `work/chunks/chunk_NN.txt`，输出是 `work/notes/chunk_NN.md`，路径唯一 |
 | 失败可隔离 | 第 37 片失败不影响其他 77 片，重跑只补 37 |
 | 可断点续跑 | 已存在的输出直接跳过，中断了重跑同一条命令 |
 | 上下文不共享也不需要 | 每一片的信息量本来就装得下一次调用，不需要全局视野 |
@@ -43,13 +43,13 @@
 
 ```bash
 # 任务清单：一行一片，交给并发调度器
-ls chunks/chunk_*.txt | xargs -P 50 -I{} bash -c '
+ls work/chunks/chunk_*.txt | xargs -P 50 -I{} bash -c '
   n=$(basename {} .txt)
-  [ -s notes/$n.md ] && exit 0                      # 已完成就跳过
+  [ -s work/notes/$n.md ] && exit 0                      # 已完成就跳过
   my-agent --no-session --mode text \
            --tools read,write \                     # 只给读写，别给它联网
            "分页读完整文件 {}（读到片尾，不要跳读），按 config/prompts/stage1_note.txt
-            的字段格式写结构化中文摘要到 notes/$n.md，全中文 900-1500 字，
+            的字段格式写结构化中文摘要到 work/notes/$n.md，全中文 900-1500 字，
             文中「原文文风样本」必须逐字摘自原文。完成后回复 DONE"
 '
 # 占位符说明：{prompt_file} / {out_file} / {chunk_file} 由 lib/llm.py 的 command 后端替换
@@ -79,7 +79,7 @@ python scripts/02_run_notes.py --par 32
 ```
 
 `lib/llm.py` 用线程池打 `/chat/completions`，失败的自动退避重试，
-每片一份日志落在 `logs/notes/`。片内容直接内联进提示词，不需要模型自己读文件。
+每片一份日志落在 `work/logs/notes/`。片内容直接内联进提示词，不需要模型自己读文件。
 
 ### C. 人工多开窗口（没有编程条件时的退路）
 
@@ -113,7 +113,7 @@ python scripts/02_run_notes.py --par 32
 
 1. **一个任务只读它自己那份输入。** 别让子代理"参考一下别的内容"——
    一个任务一旦看到别的片，摘要就开始串味。
-2. **输出文件名必须唯一且可预测**（`notes/chunk_NN.md`）。
+2. **输出文件名必须唯一且可预测**（`work/notes/chunk_NN.md`）。
    两个任务写同一个文件 = 结果随机丢失。
 3. **摘要模板先定死再开跑。** 几十个任务的格式不一致，后面没法机械合并，
    只能人工收拾——并行省下的时间全赔进去。

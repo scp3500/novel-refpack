@@ -65,14 +65,14 @@ def main():
         state["last"] = u["title"]
     flush()
 
-    textio.write_json(os.path.join(ROOT, "manifest.json"), man)
+    textio.write_json(project.artifact(cfg, "manifest.json"), man)
     print("分片：%d 片 ｜ 合计 %d 字 ｜ 目标 %d 字/片" % (
         len(man), sum(m["chars"] for m in man), target))
     for m in man:
         print("%3d  %6d  %-10s | %-34s | %s" % (
             m["chunk"], m["chars"], (m["h1"] or "")[:10],
             (m["first"] or "")[:34], (m["last"] or "")[:30]))
-    print("→ manifest.json")
+    print("→ work/manifest.json")
     print("下一步：python scripts/02_run_notes.py")
 
 

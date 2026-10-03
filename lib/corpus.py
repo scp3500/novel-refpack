@@ -69,11 +69,6 @@ def paragraphs(raw):
     return out
 
 
-def split_quote_para(p):
-    """一段 → (引号内列表, 挖掉引号后的剩余文本)"""
-    return QUOTE.findall(p), QUOTE.sub("", p)
-
-
 SENT_END = re.compile(r"[^。！？…\n]*[。！？…]+|[^。！？…\n]+")
 
 

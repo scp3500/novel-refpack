@@ -154,4 +154,8 @@ def run_batch(jobs, work, concurrency=16, label="job", logdir="logs",
     print("[%s] 完成 %d / 失败 %d" % (label, len(done), len(failed)))
     if failed:
         print("[%s] 失败清单：%s" % (label, ", ".join(str(x) for x in failed)))
+        print("[%s] 日志：%s/%s-*.log" % (label, logdir, label))
+        print("[%s] 修好后重跑同一条命令即可（已完成的会自动跳过）" % label)
+        # 非零退出，避免上游拿不完整的数据继续往下拼成品
+        raise SystemExit(1)
     return done, failed

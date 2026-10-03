@@ -47,15 +47,6 @@ def write_json(path, obj):
         json.dump(obj, f, ensure_ascii=False, indent=1)
 
 
-def strip_quotes(s, opens, closes):
-    """把引号从字符串里拿掉（用于统计叙述部分）。"""
-    for o in opens:
-        s = s.replace(o, "")
-    for c in closes:
-        s = s.replace(c, "")
-    return s
-
-
 def parse_units(text):
     """把带 `# / ## / ###` 标记的全文切成「叶级单元」列表。
 
@@ -94,21 +85,6 @@ def parse_units(text):
     if cur is not None:
         units.append(cur)
     return units
-
-
-def paras_of(text):
-    """去空行、去分隔线，得到段落列表（不切句）。"""
-    out = []
-    for ln in text.split("\n"):
-        s = ln.strip()
-        if not s:
-            continue
-        if HEAD.match(s):
-            continue
-        if re.fullmatch(r"[-—=*~·\s　]{3,}", s):
-            continue
-        out.append(s)
-    return out
 
 
 def clean_note_text(s):

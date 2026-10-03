@@ -4,8 +4,8 @@
 
 | 产物 | 定位 | 内容 |
 |---|---|---|
-| `out/整书总结.md` | **事实圣经** | 世界观、剧情走向、角色状态、伏笔、IF 分歧点、禁区 |
-| `out/例子.txt` | **文风语料** | 逐字原文摘录：叙述腔、台词分角色、描写套路、名场面、搭配表、零频黑名单 |
+| `work/out/整书总结.md` | **事实圣经** | 世界观、剧情走向、角色状态、伏笔、IF 分歧点、禁区 |
+| `work/out/例子.txt` | **文风语料** | 逐字原文摘录：叙述腔、台词分角色、描写套路、名场面、搭配表、零频黑名单 |
 
 整书总结防止模型把剧情写飞，例子集防止模型写出来有 AI 味。两份配套使用。
 
@@ -22,46 +22,66 @@ pip install -r requirements.txt          # 只用标准库也能跑，见 requir
 cp config/project.example.json config/project.json
 #  编辑 config/project.json：填 source（书的位置）、names（角色名）、引号体系
 
-python scripts/00_extract.py             # 0 抽文本   → raw/_all.txt + raw/sections.json
-python scripts/01_split.py               # 1 分片     → chunks/ + manifest.json
-python scripts/02_run_notes.py           # 2 一层摘要 → notes/chunk_NN.md（并发）
-python scripts/03_merge_notes.py         # 3 汇总     → all_notes.md
-python scripts/04_build_volume_map.py    # 4 建卷映射 → volumes/ + volume_map.json
-python scripts/05_run_volumes.py         # 5 二层归纳 → notes/vol/vol_NN.md
-python scripts/05_run_volumes.py --meta  #   （可选）设定/角色/势力/伏笔等元章节
+# 不花钱、不调模型的部分（先跑这个确认抽取质量）
+python scripts/00_extract.py        # 抽文本   → work/raw/_all.txt + sections.json
+python scripts/01_split.py          # 分片     → work/chunks/ + work/manifest.json
 
-python scripts/06_build_attrib.py        # 6 台词归属 → attrib.json
-python scripts/07_stylefit_index.py      # 7 文风索引 → cache/<name>/index.json
+# 摘要两条流水线（并发，可中断可重跑）
+python scripts/02_run_notes.py      # 一层摘要 → work/notes/chunk_NN.md
+python scripts/03_merge_notes.py    # 汇总     → work/all_notes.md（带片尾覆盖率校验）
+python scripts/04_build_volume_map.py   # 卷映射 → work/volumes/ + work/volume_map.json
+python scripts/05_run_volumes.py    # 二层     → work/notes/vol/vol_NN.md
+python scripts/05_run_volumes.py --meta # 元章节 → work/notes/meta/*.md
+
+# 文风索引与两份成品
+python scripts/06_build_attrib.py   # 台词归属 → work/attrib.json
+python scripts/07_stylefit_index.py # 文风索引 → work/cache/<name>/index.json
 python scripts/08_stylefit_query.py --stats   # 查索引（写作前必查）
+python scripts/09_build_examples.py # 例子集   → work/out/例子.txt
+python scripts/10_build_summary.py  # 整书总结 → work/out/整书总结.md
 
-python scripts/09_build_examples.py      # 8 生成例子集 → out/例子.txt
-python scripts/10_build_summary.py       # 9 生成整书总结 → out/整书总结.md
-python scripts/11_verify.py --text <稿子> # 10 验收（对生成的示范段 / 你的稿子）
+# 验收
+python scripts/11_verify.py --text <你的稿子>
 ```
 
-中途失败直接重跑同一条命令：已完成的片会跳过，缺的补上（`--only 3,7` 可指定编号）。
+一把跑完：`bash scripts/12_run_all.sh`（`--no-llm` 只跑不调模型的那几段）。
+中途失败直接重跑同一条命令：已完成的片会跳过，缺的补上（`--only 3,7` 指定编号）。
 
 ---
 
 ## 目录结构
 
 ```
-novel-refpack/
-├─ scripts/          流水线（按编号顺序跑）
-├─ stylefit/         文风拟合工具包（建索引 / 查询 / 验收）
-├─ lib/              公共库：文本 IO、模型调用、语料解析
-├─ config/
-│  ├─ project.example.json   项目配置模板
-│  ├─ prompts/               各阶段提示词模板（可直接改）
-│  └─ stylefit/              文风索引的词表：搭配 / 意图 / 场景 / 用词
+novel-refpack/                        ← 工具目录：只放代码、配置、文档
+├─ scripts/          流水线，编号即执行顺序（00 → 12）
+│  ├─ 00_extract      抽文本          │ 06_build_attrib   台词归属
+│  ├─ 01_split        分片            │ 07_stylefit_index 文风索引
+│  ├─ 02_run_notes    一层摘要（并发）│ 08_stylefit_query 查索引
+│  ├─ 03_merge_notes  汇总 + 校验     │ 09_build_examples 例子集
+│  ├─ 04_build_volume_map 卷映射      │ 10_build_summary  整书总结
+│  ├─ 05_run_volumes  二层 / --meta   │ 11_verify         验收
+│  └─ 12_run_all.sh   一把跑完
+├─ stylefit/         文风工具包（纯语料驱动，可单独用）
+│  ├─ SKILL.md       方法说明 + 写作规矩
+│  ├─ build_index.py 建索引 · query.py 查 · verify.py 验收
+├─ lib/              公共库：textio（读写）· llm（模型后端）· corpus（语料）· project（配置）
+├─ config/           全部可改，不含代码
+│  ├─ project.example.json   项目配置模板 → 复制成 project.json
+│  ├─ bans.md                禁区（模型最容易犯的错，嵌进两份成品）
+│  ├─ prompts/               stage1_* / stage2_* / meta_*（新加 meta_xxx 会被自动发现）
+│  └─ stylefit/              colloc 搭配 · words 用词 · intents 意图 · scenes 场景
 ├─ docs/
-│  ├─ WORKFLOW.md    七阶段详解：输入输出、验收标准、上下文预算
-│  ├─ TEMPLATES.md   摘要模板 + 两份成品的结构骨架
-│  ├─ PITFALLS.md    踩过的坑 + 指标目标值
-│  └─ CONFIG.md      配置字段说明
-└─ work/             跑出来的数据（已 gitignore）
-   ├─ raw/ chunks/ notes/ notes/vol/ volumes/ cache/ logs/ out/
+│  ├─ WORKFLOW.md    流程详解：每步的输入输出、验收判据、上下文预算
+│  ├─ PARALLEL.md    并行：开多少路子代理、并发怎么定、防跑歪的规则
+│  ├─ TEMPLATES.md   模板与两份成品的骨架 + 喂给模型的提示词骨架
+│  ├─ PITFALLS.md    坑与指标目标值
+│  └─ CONFIG.md      配置字段速查
+└─ work/             跑出来的数据（已 gitignore，删了可重建）
+   └─ raw/ chunks/ volumes/ notes/{,vol,meta}/ cache/ out/ logs/
+      manifest.json  volume_map.json  attrib.json  all_notes.md
 ```
+
+一句话分界：**仓库根以外的东西都可提交，`work/` 里的东西都可删。**
 
 ## 两套脚本
 
@@ -70,11 +90,13 @@ novel-refpack/
 **stylefit**（`stylefit/`）：从语料本身拟合文风，不需要人工标注。
 
 ```bash
-python stylefit/build_index.py --corpus chunks --out cache/mybook --names 甲,乙,丙
-python stylefit/query.py --index cache/mybook/index.json --colloc 耳朵的动作
-python stylefit/query.py --index cache/mybook/index.json --who 主角 --func 让步接受
-python stylefit/verify.py --text 稿子.txt --corpus chunks --out cache/mybook --ref-pattern '(猫|尾巴)'
+python stylefit/build_index.py --corpus work/chunks --out work/cache/mybook --names 甲,乙,丙
+python stylefit/query.py --index work/cache/mybook/index.json --colloc 耳朵的动作
+python stylefit/query.py --index work/cache/mybook/index.json --who 主角 --func 让步接受
+python stylefit/verify.py --text 稿子.txt --corpus work/chunks --out work/cache/mybook --ref-pattern '(猫|尾巴)'
 ```
+
+用 `scripts/07` ~ `scripts/11` 调时路径已配好，不用手写这些参数。
 
 `verify.py` 出四层结果：门槛（在不在范围内）、结构（自打乱比值）、逐句（字符 4-gram 的 z 值）、0 频探针（新造 4-gram 倍数）。
 

@@ -4,25 +4,25 @@
 全程不靠记忆、不靠印象，任何结论都能回原文核对。
 
 ```
-源文件 ──00_extract──► raw/_all.txt ──01_split──► chunks/ + manifest.json
+源文件 ──00_extract──► work/raw/_all.txt ──01_split──► work/chunks/ + work/manifest.json
                                                       │
                         02_run_notes（并发 N 路，一片一任务）
                                                       ▼
-                                              notes/chunk_NN.md
+                                              work/notes/chunk_NN.md
                                                       │ 03_merge_notes
                                                       ▼
-                                                 all_notes.md
+                                                 work/all_notes.md
                                                       │ 04_build_volume_map
                                                       ▼
-                                    volumes/vol_NN.txt + volume_map.json
+                                    work/volumes/vol_NN.txt + work/volume_map.json
                                                       │ 05_run_volumes（并发）
                                                       ▼
-                                              notes/vol/vol_NN.md ──┐
-                    05_run_volumes --meta ──► notes/meta/*.md ─────┤
-                                                                   ├──10_build_summary──► out/整书总结.md
-chunks/ ──06_build_attrib──► attrib.json ──┐                       │
-                                           ├──07_stylefit_index──► cache/<name>/index.json
-                                                                   ├──09_build_examples──► out/例子.txt
+                                              work/notes/vol/vol_NN.md ──┐
+                    05_run_volumes --meta ──► work/notes/meta/*.md ─────┤
+                                                                   ├──10_build_summary──► work/out/整书总结.md
+work/chunks/ ──06_build_attrib──► work/attrib.json ──┐                       │
+                                           ├──07_stylefit_index──► work/cache/<name>/index.json
+                                                                   ├──09_build_examples──► work/out/例子.txt
 稿子 ──────────────────────────────────────┴──11_verify──► 四层指标
 ```
 
@@ -30,7 +30,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 0 · 抽文本（`scripts/00_extract.py`）
 
-**输入** `.epub` / `.docx` / `.txt` ｜ **输出** `raw/_all.txt` + `raw/sections.json`
+**输入** `.epub` / `.docx` / `.txt` ｜ **输出** `work/raw/_all.txt` + `work/raw/sections.json`
 
 - epub：按 `META-INF/container.xml` → `.opf` 的 **spine 顺序**读内页，不是按文件名。
 - `h1-h4` 转成 `# / ## / ### / ####` 标记，`p` 转段落 —— **层级必须保留**，
@@ -47,12 +47,12 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 1 · 分片（`scripts/01_split.py`）
 
-**输入** `raw/_all.txt` ｜ **输出** `chunks/chunk_NN.txt` + `manifest.json`
+**输入** `work/raw/_all.txt` ｜ **输出** `work/chunks/chunk_NN.txt` + `work/manifest.json`
 
 - 最小切点是 h2/h3（章 / 话），**满 `chunk_chars` 就切**，默认 60000 字。
 - **不跨 h1 版块**：外传、附录这类独立板块不能和主线混在一片里，
   否则一层摘要会把两种视点揉成一份，后面没法分区。
-- `manifest.json` 记每片的起止标题、字数、所属 h1 —— 后面每个脚本都靠它。
+- `work/manifest.json` 记每片的起止标题、字数、所属 h1 —— 后面每个脚本都靠它。
 
 **为什么是 6 万字**：够大到不丢上下文，够小到单次调用不爆窗口。
 实测一片 5.2 万字 ≈ 31k–60k token 输入，输出摘要 1.5–3k 字。
@@ -64,7 +64,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 2 · 一层摘要（`scripts/02_run_notes.py`）
 
-**输入** `chunks/chunk_NN.txt` ｜ **输出** `notes/chunk_NN.md`
+**输入** `work/chunks/chunk_NN.txt` ｜ **输出** `work/notes/chunk_NN.md`
 
 **一片 = 一个独立任务。** 这是整个流程能扩到几百万字的关键，也是**能开几十路子代理**的原因：
 
@@ -98,7 +98,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 3 · 汇总（`scripts/03_merge_notes.py`）
 
-**输入** `notes/*.md` ｜ **输出** `all_notes.md`
+**输入** `work/notes/*.md` ｜ **输出** `work/all_notes.md`
 
 合并 + 校验。摘要本身**不要清洗**（保真），清洗留给生成成品时做。
 
@@ -106,7 +106,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 4 · 卷映射（`scripts/04_build_volume_map.py`）
 
-**输入** `raw/sections.json` + `_all.txt` ｜ **输出** `volumes/vol_NN.txt` + `volume_map.json`
+**输入** `work/raw/sections.json` + `_all.txt` ｜ **输出** `work/volumes/vol_NN.txt` + `work/volume_map.json`
 
 一层按 6 万字切，二层的单位是「卷 / 章」，两者**不对齐**。
 这里用 sections.json 的字符偏移精确切卷，并回查每卷落在哪些分片里，
@@ -118,7 +118,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 5 · 二层归纳（`scripts/05_run_volumes.py`）
 
-**输入** 该卷对应的几份分片摘要 ｜ **输出** `notes/vol/vol_NN.md`
+**输入** 该卷对应的几份分片摘要 ｜ **输出** `work/notes/vol/vol_NN.md`
 
 - **不要读原文。** 单卷原文 7–13 万字 = 45k–132k token，既贵又没必要；
   读摘要 4–6k token 就够。
@@ -130,20 +130,20 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 从卷纪要的压缩材料里归纳全书级的：定位 / 世界观 / 势力 / 角色 / 结局现状 / 伏笔。
 这些是整书总结上篇和附录的来源。
 
-**验收**：每卷纪要 1800–3500 字；`# 标题` 与 `volume_map.json` 对得上；
+**验收**：每卷纪要 1800–3500 字；`# 标题` 与 `work/volume_map.json` 对得上；
 材料里没有的设定没有出现（抽查几个自造名词）。
 
 ---
 
 ## Stage 6 · 台词归属（`scripts/06_build_attrib.py`）
 
-**输入** `chunks/*.txt` + 角色名表 ｜ **输出** `attrib.json`
+**输入** `work/chunks/*.txt` + 角色名表 ｜ **输出** `work/attrib.json`
 
 产出 `[{who, text}]`：谁说了哪句。三种高精度规则（同行后置叙述 / 下一行紧贴叙述 / 上一行以「：」结尾），
 **一句里出现两个名字就丢弃** —— 宁可少收，不要错收。
 
 归属准确率直接决定后面「语音档案」的可信度。自动抓完用 `--sample 50`
-抽一批出来复核，改完的条目直接回填 `attrib.json`。
+抽一批出来复核，改完的条目直接回填 `work/attrib.json`。
 
 **没有属归属文件怎么办**：`stylefit/build_index.py --names 甲,乙,丙` 会退化成
 「名字+说话动词+引号」自动抓，台词类够用，准确率低一档。
@@ -152,7 +152,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 7 · 文风索引（`scripts/07_stylefit_index.py`）
 
-**输入** `chunks/` + `attrib.json` + `config/stylefit/*.json` ｜ **输出** `cache/<name>/index.json`
+**输入** `work/chunks/` + `work/attrib.json` + `config/stylefit/*.json` ｜ **输出** `work/cache/<name>/index.json`
 
 这一步是全部「像不像」结论的数据源。统计出：
 
@@ -173,7 +173,7 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 8 · 生成例子集（`scripts/09_build_examples.py`）
 
-**输入** `index.json` + `attrib.json` + `notes/vol/*.md` ｜ **输出** `out/例子.txt`
+**输入** `index.json` + `work/attrib.json` + `work/notes/vol/*.md` ｜ **输出** `work/out/例子.txt`
 
 十二节：使用禁令 → 文风速览 → 叙述腔 → 内心独白 → 对白回合 →
 台词分角色+语音档案 → 亲密写法 → 名场面 → 描写套路 → 语音分期 →
@@ -189,8 +189,8 @@ chunks/ ──06_build_attrib──► attrib.json ──┐                    
 
 ## Stage 9 · 生成整书总结（`scripts/10_build_summary.py`）
 
-**输入** `all_notes.md` + `notes/vol/*.md` + `notes/meta/*.md` + `index.json`
-｜ **输出** `out/整书总结.md`
+**输入** `work/all_notes.md` + `work/notes/vol/*.md` + `work/notes/meta/*.md` + `index.json`
+｜ **输出** `work/out/整书总结.md`
 
 结构见 `docs/TEMPLATES.md`。三条纪律：
 

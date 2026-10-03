@@ -41,7 +41,7 @@ def main():
     cfg = project.load(a.config)
     notes = cfg["paths"]["notes"]
     chunks = cfg["paths"]["chunks"]
-    man = textio.read_json(os.path.join(ROOT, "manifest.json"), []) or []
+    man = textio.read_json(project.artifact(cfg, "manifest.json"), []) or []
 
     parts, missing, warns = [], [], []
     for m in man:
@@ -79,7 +79,7 @@ def main():
               "> 由 %d 份分片摘要合并，事实来源。生成成品时只取其中的剧情事件，"
               "元文本（编者前言、制作信息、作者设定草案）请勿混入。\n\n" % (
                   cfg.get("name", ""), len(parts)))
-    out = a.out or "all_notes.md"
+    out = a.out or project.artifact(cfg, "all_notes.md")
     textio.write_text(out, header + "\n\n".join(parts) + "\n")
     print("→ %s" % out)
     print("下一步：python scripts/04_build_volume_map.py")
