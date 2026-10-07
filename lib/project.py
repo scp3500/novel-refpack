@@ -51,7 +51,7 @@ def _merge(base, over):
 
 
 def load(path=None, need_source=False):
-    p = path or CONFIG
+    p = path or os.environ.get("REFPACK_CONFIG") or CONFIG
     if not os.path.isfile(p):
         if os.path.isfile(EXAMPLE):
             sys.stderr.write(

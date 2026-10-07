@@ -5,10 +5,21 @@
 #   bash scripts/12_run_all.sh --no-llm     # 只跑不花钱的部分（抽文本→分片→建索引→两份成品）
 #   PAR=32 bash scripts/12_run_all.sh       # 覆盖并发数
 #
-# 环境变量：PY（python 命令，默认 python）、PAR（并发数，默认用 config 里的值）
+# 环境变量：PY（python 命令，默认先找 python3 再找 python）、PAR（并发数，默认用 config 里的值）、
+#           REFPACK_CONFIG（配置文件路径，默认 config/project.json）
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-PY="${PY:-python}"
+if [ -z "${PY:-}" ]; then
+  # 很多 Linux / macOS 上 python 不存在或是 Python 2
+  if command -v python3 >/dev/null 2>&1; then PY=python3
+  elif command -v python >/dev/null 2>&1; then PY=python
+  else echo "找不到 python3 / python，用 PY=/path/to/python3 指定" >&2; exit 127
+  fi
+fi
+if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+  echo "需要 Python 3.9+：$PY 不满足，用 PY=/path/to/python3 指定" >&2
+  exit 2
+fi
 SKIP_LLM=0
 for arg in "$@"; do
   [ "$arg" = "--no-llm" ] && SKIP_LLM=1
