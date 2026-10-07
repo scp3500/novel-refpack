@@ -81,7 +81,8 @@ class TestCommandBackend(unittest.TestCase):
             b("x")
         self.assertLess(time.time() - t0, 10)
         self.assertTrue(os.path.isfile(pidf))
-        pid = int(open(pidf).read().strip())
+        with open(pidf, encoding="utf-8") as f:
+            pid = int(f.read().strip())
         dead = False
         for _ in range(20):
             try:

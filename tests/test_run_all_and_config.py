@@ -12,7 +12,8 @@ class TestRunAllScript(unittest.TestCase):
         path = os.path.join(ROOT, "scripts", "12_run_all.sh")
         r = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        text = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
         self.assertIn("command -v python3", text)
         py3_at = text.find("command -v python3")
         py_at = text.find("command -v python ")

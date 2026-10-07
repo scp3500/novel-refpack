@@ -65,13 +65,14 @@ class TestVolumeMapOffsets(unittest.TestCase):
         text = "# 正篇\n## 卷一\n### 一\nAAA\n### 二\nBBB\n"
         units = [u for u in textio.parse_units(text) if "\n".join(u["lines"]).strip()]
         man = [{
-            "chunk": 1, "units": 2, "first": units[0]["title"],
-            "last": units[1]["title"],
+            "chunk": 1, "units": len(units), "first": units[0]["title"],
+            "last": units[-1]["title"],
         }]
         spans = S04.chunk_spans(text, man)
+        self.assertIsNotNone(spans)
         self.assertEqual(spans[0][0], 1)
         self.assertEqual(spans[0][1], units[0]["start"])
-        self.assertEqual(spans[0][2], units[1]["end"])
+        self.assertEqual(spans[0][2], units[-1]["end"])
 
 
 class TestMetaMaterial(unittest.TestCase):
@@ -112,11 +113,15 @@ class TestMetaMaterial(unittest.TestCase):
             textio.write_json(os.path.join(cfg["paths"]["work"], "volume_map.json"), vmap)
             world = S05.meta_material(cfg, "meta_world")
             fore = S05.meta_material(cfg, "meta_foreshadow")
+            pos = S05.meta_material(cfg, "meta_positioning")
             self.assertIn("UNIQUE_SET_1", world)
             self.assertIn("UNIQUE_SET_3", world)
             self.assertNotIn("UNIQUE_FORE_1", world)
             self.assertIn("UNIQUE_FORE_2", fore)
-            self.assertNotIn("UNIQUE_SET_2", fore)
+            self.assertIn("UNIQUE_SET_2", fore)  # 伏笔元章节也要设定
+            self.assertNotIn("UNIQUE_SET_1", pos)
+            self.assertNotIn("UNIQUE_FORE_1", pos)
+            self.assertIn("第1卷范围", pos)
 
     def test_ending_keeps_tail_volumes_when_compressed(self):
         with TempProject() as tp:

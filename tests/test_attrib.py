@@ -53,7 +53,8 @@ class TestAttrib(unittest.TestCase):
         self.assertEqual(got, [("林舟", "不用。你歇着。")])
 
     def test_two_names_discard(self):
-        got = self.ids(["林舟和苏晚都道：“走。”"])
+        # 同行叙述里两个「名字+说话动词」→ 宁可丢掉
+        got = self.ids(["林舟说道，苏晚也问道：“走。”"])
         self.assertEqual(got, [])
 
     def test_object_preposition_not_subject(self):
