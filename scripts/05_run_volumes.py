@@ -9,6 +9,10 @@
 
 每个任务只读这一卷的几份分片摘要（4-6k token），不读原文——
 单卷原文 7-13 万字，输入 45k-132k token，既贵又没必要。
+
+元章节各自备料（见 VOL_SECTIONS）：世界观要「设定」、伏笔要「伏笔与回收」、
+结局现状要最后几卷的全文。材料超长时按卷均摊压缩，每卷每节保留首尾，
+不会从头截断把最后几卷丢掉。
 """
 import os
 import sys
@@ -19,6 +23,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from lib import project, textio, llm      # noqa: E402
 from lib.llm import DEFAULTS              # noqa: E402
+
+MATERIAL_CHARS = 60000
+
+# 元章节 → 从每卷纪要里取哪几节（匹配 stage2_volume.txt 的 ## 小节标题关键词）
+VOL_SECTIONS = {
+    "meta_positioning": ("范围", "剧情", "基调"),
+    "meta_world": ("剧情", "设定"),
+    "meta_factions": ("剧情", "登场", "设定"),
+    "meta_characters": ("剧情", "状态", "登场", "名场面"),
+    "meta_ending": ("剧情", "状态", "伏笔"),
+    "meta_foreshadow": ("剧情", "设定", "伏笔"),
+}
+ALL_SECTIONS = ("范围", "剧情", "状态", "登场", "设定", "名场面", "伏笔", "基调")
+# 看「此刻」的元章节：压缩时最后 N 卷权重更高，尽量全文保留
+TAIL_HEAVY = {"meta_ending": 3}
+GAP = "……（中略）……"
 
 
 def build_volume_jobs(cfg):
@@ -58,27 +78,124 @@ def build_meta_jobs(cfg):
     return jobs
 
 
-def digest(cfg, limit=60000):
-    """给元章节任务用的压缩材料：优先用每卷纪要的剧情/状态两节，其次用总摘要。"""
-    vol = sorted(glob.glob(os.path.join(cfg["paths"]["notes"], "vol", "*.md")))
-    src = []
-    if vol:
-        for f in vol:
-            t = textio.read_text(f)
-            keep = []
-            grab = False
-            for ln in t.split("\n"):
-                if ln.startswith("## "):
-                    grab = any(k in ln for k in ("剧情纪要", "状态快照", "登场人物", "名场面"))
-                if grab:
-                    keep.append(ln)
-            src.append("### %s\n%s" % (os.path.basename(f), "\n".join(keep[:80])))
-    else:
-        src = [textio.read_text(project.artifact(cfg, "all_notes.md"))]
-    text = "\n\n".join(src)
-    if len(text) > limit:
-        text = text[:limit] + "\n\n…（后略）"
-    return text
+def note_sections(text):
+    """卷纪要 → (# 标题, [(## 小节标题行, [正文行])])。### 及更深并入所属小节。"""
+    title, secs, cur = "", [], None
+    for ln in text.split("\n"):
+        if ln.startswith("# ") and not title and cur is None:
+            title = ln[2:].strip()
+            continue
+        if ln.startswith("## "):
+            cur = (ln.rstrip(), [])
+            secs.append(cur)
+            continue
+        if cur is not None:
+            cur[1].append(ln.rstrip())
+    out = []
+    for head, body in secs:
+        while body and not body[-1].strip():
+            body.pop()
+        while body and not body[0].strip():
+            body.pop(0)
+        out.append((head, body))
+    return title, out
+
+
+def allot(sizes, weights, budget):
+    """按权重分预算：放得下的块拿全量，剩下的再按权重分给放不下的。"""
+    alloc = [0] * len(sizes)
+    todo = [i for i, s in enumerate(sizes) if s > 0]
+    left = max(0, budget)
+    while todo:
+        wsum = float(sum(weights[i] for i in todo))
+        fit = {i for i in todo if sizes[i] <= left * weights[i] / wsum}
+        if not fit:
+            for i in todo:
+                alloc[i] = int(left * weights[i] / wsum)
+            break
+        for i in fit:
+            alloc[i] = sizes[i]
+            left -= sizes[i]
+        todo = [i for i in todo if i not in fit]
+    return alloc
+
+
+def clip(head, body, quota):
+    """把一节压到 quota 字以内：保留开头和结尾的行，砍中间。"""
+    lines = ([head] if head else []) + body
+    full = "\n".join(lines)
+    if len(full) <= quota:
+        return full
+    room = max(0, quota - (len(head) + 1 if head else 0) - len(GAP) - 2)
+    front, back, used = [], [], 0
+    i, j = 0, len(body)
+    while i < j and used + len(body[i]) + 1 <= room // 2:
+        used += len(body[i]) + 1
+        front.append(body[i])
+        i += 1
+    while j > i and used + len(body[j - 1]) + 1 <= room:
+        j -= 1
+        used += len(body[j]) + 1
+        back.insert(0, body[j])
+    if not front and not back and body and room > 0:
+        front = [body[0][:room]]
+    return "\n".join(([head] if head else []) + front + [GAP] + back)
+
+
+def material_blocks(cfg, keys):
+    """[(卷标题, [(小节标题, [行])])]，按卷序。没有卷纪要时退回 all_notes.md 的分片块。"""
+    blocks = []
+    vols = project.vol_notes(cfg)
+    if vols:
+        for v, f in vols:
+            title, secs = note_sections(textio.read_text(f))
+            label = title or (("%s %s" % (v.get("h1") or "", v.get("h2") or "")).strip()
+                              if v else "") or os.path.basename(f)
+            pieces = [(h, b) for h, b in secs
+                      if not h.startswith("## 附") and any(k in h for k in keys)]
+            blocks.append((label, pieces))
+        return blocks
+    p = project.artifact(cfg, "all_notes.md")
+    if not os.path.isfile(p):
+        raise SystemExit("没有卷纪要也没有 work/all_notes.md：先跑 05_run_volumes.py（不带 --meta）")
+    cur = None
+    for ln in textio.read_text(p).split("\n"):
+        if ln.startswith("## 分片"):
+            cur = (ln[3:].strip(), [("", [])])
+            blocks.append(cur)
+        elif cur is not None:
+            cur[1][0][1].append(ln.rstrip())
+    return blocks
+
+
+def meta_material(cfg, prompt_name, limit=MATERIAL_CHARS):
+    """给某个元章节备料：取它需要的小节；超过 limit 时每卷每节按权重压缩、保留首尾。"""
+    blocks = material_blocks(cfg, VOL_SECTIONS.get(prompt_name, ALL_SECTIONS))
+    n = len(blocks)
+    tail = TAIL_HEAVY.get(prompt_name, 0)
+    sizes, weights = [], []
+    for bi, (_, pieces) in enumerate(blocks):
+        for h, body in pieces:
+            sizes.append(len("\n".join(([h] if h else []) + body)))
+            weights.append(4 if tail and bi >= n - tail else 1)
+
+    def render(alloc, note=""):
+        out, k = [], 0
+        for label, pieces in blocks:
+            parts = ["### %s" % label]
+            for h, body in pieces:
+                parts.append(clip(h, body, alloc[k]))
+                k += 1
+            out.append("\n".join(parts))
+        return note + "\n\n".join(out)
+
+    text = render(sizes)
+    if len(text) <= limit:
+        return text
+    note = "（材料已按卷压缩：共 %d 卷，每卷各节保留首尾%s。）\n\n" % (
+        n, "，最后 %d 卷优先保全" % tail if tail else "")
+    overhead = len(render([0] * len(sizes), note)) - len(GAP) * len(sizes)
+    return render(allot(sizes, weights, limit - overhead - len(GAP) * len(sizes)), note)
 
 
 def main():
@@ -110,19 +227,20 @@ def main():
     if not a.force:
         jobs = [j for j in jobs if not (os.path.isfile(j[1]["out"])
                                         and os.path.getsize(j[1]["out"]) > 300)]
+    mats = {k: meta_material(cfg, j["prompt"]) for k, j in jobs} if a.meta else {}
     print("待办 %d ｜ 模式 %s ｜ 并发 %d" % (len(jobs), "meta" if a.meta else "volumes", par))
     if a.dry_run:
         for k, j in jobs:
-            print("   %s  %s" % (k, j["out"]))
+            extra = "  材料 %d 字" % len(mats[k]) if a.meta else ""
+            print("   %s  %s%s" % (k, j["out"], extra))
         return
 
     unit = cfg.get("vol_unit_word") or "卷"
-    dg = digest(cfg) if a.meta else None
 
     def work(k, j):
         if a.meta:
             prompt = project.prompt(cfg, j["prompt"], name=cfg.get("name", ""),
-                                    material=dg)
+                                    material=mats[k])
         else:
             body = "\n\n".join(
                 "--- %s ---\n%s" % (os.path.basename(f), textio.read_text(f)[:9000])
