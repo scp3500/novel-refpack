@@ -6,7 +6,8 @@
   python scripts/01_split.py --target 40000
 
 规则：以 h2/h3 为最小切点，满一片就切；不跨 h1 版块。
-manifest 记每片的起止标题、字数、所属 h1，后面所有脚本都靠它定位。
+manifest 记每片的起止标题、字数、所属 h1，以及在 raw/_all.txt 里的字符偏移
+（start / end，左闭右开），后面所有脚本都靠它定位。
 """
 import os
 import sys
@@ -34,7 +35,8 @@ def main():
     text = textio.read_text(src)
     units = textio.parse_units(text)
 
-    state = {"buf": [], "h1": None, "first": None, "last": None, "n": 0, "len": 0}
+    state = {"buf": [], "h1": None, "first": None, "last": None, "n": 0, "len": 0,
+             "start": None, "end": None}
     man = []
 
     def flush():
@@ -45,8 +47,9 @@ def main():
         textio.write_text(os.path.join(outdir, "chunk_%02d.txt" % idx), body)
         man.append({"chunk": idx, "chars": len(body), "h1": state["h1"],
                     "first": state["first"], "last": state["last"],
-                    "units": state["n"]})
-        state.update(buf=[], h1=None, first=None, last=None, n=0, len=0)
+                    "units": state["n"], "start": state["start"], "end": state["end"]})
+        state.update(buf=[], h1=None, first=None, last=None, n=0, len=0,
+                     start=None, end=None)
 
     for u in units:
         seg = "\n".join(u["lines"]).strip()
@@ -59,10 +62,12 @@ def main():
         if not state["buf"]:
             state["h1"] = u["h1"]
             state["first"] = u["title"]
+            state["start"] = u["start"]
         state["buf"].append(seg)
         state["len"] += len(seg) + 1
         state["n"] += 1
         state["last"] = u["title"]
+        state["end"] = u["end"]
     flush()
 
     textio.write_json(project.artifact(cfg, "manifest.json"), man)

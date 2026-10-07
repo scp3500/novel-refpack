@@ -51,28 +51,35 @@ def parse_units(text):
     """把带 `# / ## / ###` 标记的全文切成「叶级单元」列表。
 
     一个单元 = 一个 h2 或 h3 标题 + 它后面的正文行，直到下一个 h2/h3 或 h1。
-    返回 [{level, h1, h2, title, lines}]，顺序与原文一致。
+    返回 [{level, h1, h2, title, lines, start, end}]，顺序与原文一致；
+    start / end 是该单元在 text 里的字符偏移（左闭右开），卷映射靠它对齐分片。
     """
     units = []
     cur_h1, cur_h2 = "", ""
     cur = None
+    pos = 0
+
+    def close(at):
+        if cur is not None:
+            cur["end"] = at
+            units.append(cur)
+
     for ln in text.split("\n"):
+        at, pos = pos, pos + len(ln) + 1
         m = HEAD.match(ln)
         if m:
             lvl, title = len(m.group(1)), m.group(2).strip()
             if lvl == 1:
                 cur_h1, cur_h2 = title, ""
-                if cur is not None:
-                    units.append(cur)
-                    cur = None
+                close(at)
+                cur = None
                 continue
             if lvl == 2:
                 cur_h2 = title
             if lvl in (2, 3):
-                if cur is not None:
-                    units.append(cur)
+                close(at)
                 cur = {"level": lvl, "h1": cur_h1, "h2": cur_h2,
-                       "title": title, "lines": [ln]}
+                       "title": title, "lines": [ln], "start": at}
                 continue
             # 更深层级：并入当前单元
             if cur is not None:
@@ -80,10 +87,9 @@ def parse_units(text):
             continue
         if cur is None:
             cur = {"level": 3, "h1": cur_h1, "h2": cur_h2,
-                   "title": "(前言)", "lines": []}
+                   "title": "(前言)", "lines": [], "start": at}
         cur["lines"].append(ln)
-    if cur is not None:
-        units.append(cur)
+    close(len(text))
     return units
 
 

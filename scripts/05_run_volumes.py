@@ -30,14 +30,16 @@ def build_volume_jobs(cfg):
     jobs = []
     for v in vmap:
         of = os.path.join(outdir, "vol_%02d.md" % v["i"])
-        # 该卷命中的分片摘要；命中为空就取区间内的分片
         nums = v.get("chunks") or []
         if not nums:
-            nums = list(range(max(1, v["i"] * 3 - 2), v["i"] * 3 + 1))
+            print("跳过 vol_%02d（卷映射里没有对应分片，检查 04_build_volume_map 的输出）" % v["i"])
+            continue
         files = [os.path.join(notes, "chunk_%02d.md" % n) for n in nums]
-        files = [f for f in files if os.path.isfile(f)]
-        if not files:
-            print("跳过 vol_%02d（没有对应摘要）" % v["i"])
+        lack = [n for n, f in zip(nums, files) if not os.path.isfile(f)]
+        if lack:
+            # 缺一片就开跑会产出一份缺剧情的纪要，之后重跑还会被当成「已完成」跳过
+            print("跳过 vol_%02d（缺分片摘要 %s，先补跑 scripts/02_run_notes.py --only %s）" % (
+                v["i"], ",".join("%02d" % n for n in lack), ",".join(str(n) for n in lack)))
             continue
         label = ("%s %s" % (v.get("h1") or "", v["h2"])).strip()
         jobs.append((v["i"], {"out": of, "files": files, "label": label,
