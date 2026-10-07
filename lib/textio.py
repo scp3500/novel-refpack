@@ -3,10 +3,36 @@
 import os
 import re
 import json
+import uuid
 
 ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "latin-1")
 
 HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def tmp_sibling(path):
+    """同目录下的隐藏临时文件名：同一文件系统才能 os.replace 原子替换，
+    以「.」开头、以 .tmp 结尾，不会被 *.md / *.txt 的 glob 捞到。"""
+    path = os.path.abspath(path)
+    return os.path.join(os.path.dirname(path),
+                        ".%s.%s.tmp" % (os.path.basename(path), uuid.uuid4().hex[:8]))
+
+
+def _atomic_write(path, dump):
+    d = os.path.dirname(os.path.abspath(path))
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = tmp_sibling(path)
+    try:
+        with open(tmp, "x", encoding="utf-8", newline="\n") as f:
+            dump(f)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def read_text(path):
@@ -22,11 +48,8 @@ def read_text(path):
 
 
 def write_text(path, s):
-    d = os.path.dirname(os.path.abspath(path))
-    if d:
-        os.makedirs(d, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(s)
+    """先写同目录临时文件再 os.replace：中途崩溃不会留下半截文件被当成「已完成」。"""
+    _atomic_write(path, lambda f: f.write(s))
 
 
 def read_json(path, default=None):
@@ -40,11 +63,7 @@ def read_json(path, default=None):
 
 
 def write_json(path, obj):
-    d = os.path.dirname(os.path.abspath(path))
-    if d:
-        os.makedirs(d, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=1)
+    _atomic_write(path, lambda f: json.dump(obj, f, ensure_ascii=False, indent=1))
 
 
 def parse_units(text):

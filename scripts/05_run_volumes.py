@@ -100,6 +100,9 @@ def main():
     par = a.par or lcfg["concurrency"]
     backend = llm.build(lcfg)
 
+    # command 后端的输出先落在目标目录里的临时文件，目录必须先存在
+    os.makedirs(os.path.join(cfg["paths"]["notes"], "meta" if a.meta else "vol"), exist_ok=True)
+
     only = set(a.only.split(",")) if a.only else None
     jobs = build_meta_jobs(cfg) if a.meta else build_volume_jobs(cfg)
     if only:
