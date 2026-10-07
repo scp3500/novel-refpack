@@ -10,6 +10,12 @@ ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "latin-1")
 HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
+def natural_key(s):
+    """按内嵌数字排序：vol_99 < vol_100（字符串排序会把 vol_100 排在 vol_11 前面）。"""
+    parts = re.split(r"(\d+)", str(s))
+    return [int(p) if i % 2 else p for i, p in enumerate(parts)]
+
+
 def tmp_sibling(path):
     """同目录下的隐藏临时文件名：同一文件系统才能 os.replace 原子替换，
     以「.」开头、以 .tmp 结尾，不会被 *.md / *.txt 的 glob 捞到。"""

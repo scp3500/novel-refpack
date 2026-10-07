@@ -57,7 +57,8 @@ def main():
         return got[0] if len(got) == 1 else None
 
     pairs = []
-    files = sorted(glob.glob(os.path.join(cfg["paths"]["chunks"], "chunk_*.txt")))
+    files = sorted(glob.glob(os.path.join(cfg["paths"]["chunks"], "chunk_*.txt")),
+                   key=textio.natural_key)
     if not files:
         files = [os.path.join(cfg["paths"]["raw"], "_all.txt")]
     for f in files:

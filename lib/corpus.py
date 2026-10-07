@@ -9,6 +9,8 @@ import re
 import json
 import glob
 
+from .textio import natural_key
+
 CHAP = re.compile(r"^\s*第[0-9零一二三四五六七八九十百千两]+[章回节话卷]\s")
 
 QUOTE_OPEN = ["“", "「", "『"]
@@ -42,8 +44,10 @@ def load_corpus(path):
         if not p:
             continue
         if os.path.isdir(p):
-            files += sorted(glob.glob(os.path.join(p, "**", "*.txt"), recursive=True))
-            files += sorted(glob.glob(os.path.join(p, "**", "*.md"), recursive=True))
+            files += sorted(glob.glob(os.path.join(p, "**", "*.txt"), recursive=True),
+                            key=natural_key)
+            files += sorted(glob.glob(os.path.join(p, "**", "*.md"), recursive=True),
+                            key=natural_key)
         elif os.path.isfile(p):
             files.append(p)
     texts = []

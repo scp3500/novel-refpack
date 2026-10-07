@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import glob
 
 from . import textio
 
@@ -87,6 +88,22 @@ def load(path=None, need_source=False):
 def artifact(cfg, name):
     """work/ 下的单个文件，如 manifest.json / attrib.json / all_notes.md。"""
     return os.path.join(cfg["paths"]["work"], name)
+
+
+def vol_notes(cfg, with_missing=False):
+    """卷纪要 notes/vol/vol_NN.md，按 volume_map.json 的卷序返回 [(卷条目, 路径)]。
+
+    以卷映射为准：重建卷映射后残留的旧 vol_NN.md 不会混进来，
+    最后一项就是真正的最后一卷。with_missing=True 时缺纪要的卷也列出（路径不存在）。
+    没有 volume_map.json 时退回按文件名里的数字排序。
+    """
+    vdir = os.path.join(cfg["paths"]["notes"], "vol")
+    vmap = textio.read_json(artifact(cfg, "volume_map.json"), None)
+    if vmap:
+        out = [(v, os.path.join(vdir, "vol_%02d.md" % v["i"])) for v in vmap]
+        return out if with_missing else [x for x in out if os.path.isfile(x[1])]
+    files = sorted(glob.glob(os.path.join(vdir, "vol_*.md")), key=textio.natural_key)
+    return [(None, f) for f in files]
 
 
 def prompt(cfg, stem, **kw):

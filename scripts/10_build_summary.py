@@ -17,7 +17,6 @@
 import os
 import re
 import sys
-import glob
 import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,8 +29,10 @@ def read_meta(cfg, name):
     return textio.read_text(p).strip() if os.path.isfile(p) else ""
 
 
-def vol_notes(cfg):
-    return sorted(glob.glob(os.path.join(cfg["paths"]["notes"], "vol", "*.md")))
+def vol_label(v, f):
+    if v:
+        return ("%s %s" % (v.get("h1") or "", v.get("h2") or "")).strip() or os.path.basename(f)
+    return os.path.basename(f)
 
 
 def section_of(text, keys):
@@ -62,7 +63,8 @@ def main():
 
     cfg = project.load(a.config)
     name = cfg.get("name") or ""
-    vols = vol_notes(cfg)
+    all_vols = project.vol_notes(cfg, with_missing=True)
+    vols = [f for _, f in all_vols if os.path.isfile(f)]
     L = []
     P = L.append
     miss = []
@@ -111,11 +113,21 @@ def main():
           read_meta(cfg, "meta_ending"),
           "跑 python scripts/05_run_volumes.py --meta，产出 notes/meta/meta_ending.md")
 
+    # 状态卡只认卷映射里的最后一卷：它的纪要缺了就留空报缺，
+    # 拿前一卷顶替会把时间锚悄悄挪早
     state = ""
-    if vols:
-        state = section_of(textio.read_text(vols[-1]), ("状态快照", "角色状态"))
-    block(True, "## 0.3 角色状态卡（截至结局）", state,
-          "卷纪要模板里要有「本篇末角色状态快照」一节（见 config/prompts/stage2_volume.txt）")
+    hint = "卷纪要模板里要有「本篇末角色状态快照」一节（见 config/prompts/stage2_volume.txt）"
+    if all_vols:
+        lv, lf = all_vols[-1]
+        if os.path.isfile(lf):
+            state = section_of(textio.read_text(lf), ("状态快照", "角色状态"))
+            if state:
+                state = "> 截至：%s\n\n%s" % (vol_label(lv, lf), state)
+        else:
+            hint = "最后一卷 %s（%s）的纪要缺失：python scripts/05_run_volumes.py --only %s" % (
+                os.path.basename(lf), vol_label(lv, lf), lv["i"] if lv else "")
+            print("警告：" + hint)
+    block(True, "## 0.3 角色状态卡（截至结局）", state, hint)
 
     fore = read_meta(cfg, "meta_foreshadow")
     if_points = cfg.get("if_points") or []
@@ -173,6 +185,9 @@ def main():
             t = textio.clean_note_text(textio.read_text(f))
             P(t.strip())
             P("")
+        lack = [v["i"] for v, f in all_vols if v and not os.path.isfile(f)]
+        if lack:
+            miss.append("下篇缺 %d 卷（%s）" % (len(lack), ",".join(map(str, lack))))
     else:
         miss.append("下篇 分篇详细剧情")
         P("<!-- 缺 notes/vol/*.md：跑 python scripts/05_run_volumes.py -->")

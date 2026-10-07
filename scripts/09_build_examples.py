@@ -14,7 +14,6 @@
 import os
 import re
 import sys
-import glob
 import argparse
 from collections import defaultdict, Counter
 
@@ -114,7 +113,7 @@ def stage_table(pairs, periods=3, top=8):
 def scene_cards(cfg, k=3):
     """名场面：从每卷纪要里抽「名场面与关键台词」小节的逐字引文。"""
     out, seen = [], set()
-    for f in sorted(glob.glob(os.path.join(cfg["paths"]["notes"], "vol", "*.md"))):
+    for _, f in project.vol_notes(cfg):
         t = textio.read_text(f)
         grab, buf = False, []
         for ln in t.split("\n"):
