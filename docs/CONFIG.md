@@ -1,98 +1,129 @@
 # 配置说明
 
-## config/project.json
+项目通过 `config/` 目录管理任务参数、模型调用后端、文风统计词典与提示词模板。
 
-先从模板复制：`cp config/project.example.json config/project.json`。
-这个文件已在 `.gitignore` 里（含本机路径）。
+---
 
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `name` | — | 书名，用于输出目录和标题 |
-| `source` | — | 源文件路径（`.epub` / `.docx` / `.txt`） |
-| `chunk_chars` | `60000` | 每片目标字数 |
-| `quote_open` / `quote_close` | `["“","「","『"]` / `["”","」","』"]` | 引号体系。**只填你书里实际用的**，填多了会误切 |
-| `person` | `"third"` | `first` / `third`，只写进提示词供模型参考 |
-| `protagonist` | `""` | 主角名，部分脚本会用到 |
-| `vol_unit_word` | `"卷"` | 二层归纳的单位叫法：卷 / 章 / 篇 / ARC |
-| `names` | `[]` | 角色名列表。**自动抓台词归属和语音档案靠它**，越全越好 |
-| `drop_headings` | `["简介","制作信息","封面及彩页"]` | 抽文本时整段丢弃的标题 |
-| `hard_settings` | `[]` | 整书总结「〇.1 硬设定速查」的条目，5-10 条 |
-| `if_points` | `[]` | 整书总结「〇.4 IF 分歧点」的条目 |
-| `llm` | 见下 | 模型后端配置（API / 子代理 CLI） |
+## 1. 项目基础配置：`config/project.json`
 
-### llm 段
+从模板初始化：
+```bash
+cp config/project.example.json config/project.json
+```
+
+该文件已列入 `.gitignore`，包含本地文件路径与模型访问参数。
+
+### 字段说明
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `name` | string | 必填 | 书名或项目代号，用作输出目录与文档主标题 |
+| `source` | string | 必填 | 语料文件路径，支持 `.epub`、`.docx`、`.txt` |
+| `chunk_chars` | int | `60000` | 单分片目标字数 |
+| `quote_open` | list | `["“", "「", "『"]` | 台词前引号。建议仅保留书内实际使用的符号 |
+| `quote_close` | list | `["”", "」", "』"]` | 台词后引号。需与 `quote_open` 配对 |
+| `person` | string | `"third"` | 叙述人称（`"first"` 或 `"third"`），注入提示词供模型对齐视点 |
+| `protagonist` | string | `""` | 主角名称 |
+| `vol_unit_word` | string | `"卷"` | 二层剧情归纳单位（如：卷、章、篇、ARC） |
+| `names` | list | `[]` | 角色名列表，用于台词归属统计与角色档案归纳 |
+| `drop_headings` | list | `["简介", "制作信息", "封面及彩页"]` | 文本抽取阶段直接丢弃的无正文标题 |
+| `hard_settings` | list | `[]` | 注入《整书总结》开头的硬设定条目（建议 5-10 条） |
+| `if_points` | list | `[]` | 注入《整书总结》开头的分歧点条目 |
+| `llm` | object | 见下文 | 大模型调用后端配置 |
+| `paths` | object | 可选 | 产物目录映射，默认指向 `work/` 下各子目录 |
+
+### llm 后端配置
+
+支持两种调用后端：**OpenAI 兼容接口** 与 **外部 CLI 命令**。
+
+#### A. OpenAI 兼容接口（API / 本地引擎）
+
+适用于云端大模型、vLLM、Ollama、LM Studio 等服务：
 
 ```jsonc
-// A. OpenAI 兼容接口（本地 vLLM / Ollama / LM Studio / 云端 API）
 "llm": {
   "backend": "openai",
-  "base_url": "http://127.0.0.1:8000/v1",
-  "api_key_env": "OPENAI_API_KEY",   // 从这个环境变量读 key
-  "model": "your-model",
+  "base_url": "https://api.example.com/v1",
+  "api_key_env": "OPENAI_API_KEY",   // 读取 API Key 的环境变量名
+  "model": "gpt-4o-mini",
   "temperature": 0.3,
   "max_tokens": 4096,
   "timeout": 600,
   "retries": 3,
   "concurrency": 16,
-  "extra_body": {}                    // 需要额外参数时塞这里
+  "extra_body": {}                    // 传递给底层的额外请求体参数
 }
+```
 
-// B. 任意 CLI（把你的 agent 接进来）
+#### B. 外部 CLI 命令（子代理 / 本地 Agent）
+
+适用于调用本地 Agent 命令行工具执行独立会话：
+
+```jsonc
 "llm": {
   "backend": "command",
-  "command": "my-agent -p --no-session < {prompt_file} > {out_file}",
+  "command": "my-agent -p --no-session --tools read,write < {prompt_file} > {out_file}",
   "concurrency": 8,
   "timeout": 1800,
   "retries": 3
 }
 ```
 
-`command` 里可用占位符：`{prompt_file}` `{out_file}` `{chunk_file}`。
-命令跑完若 `{out_file}` 不存在，就取命令的 stdout 当结果。
+- **命令占位符**：
+  - `{prompt_file}`：当前任务的提示词临时文件路径。
+  - `{out_file}`：期望产物输出文件路径。若命令结束时该文件未生成，系统默认捕获进程的 stdout 作为结果。
+  - `{chunk_file}`：当前分片对应的文本文件路径。
+- **权限建议**：子代理仅需开放本地文件读写权限，避免赋予网络访问权限以保证执行确定性。
 
-**B 模式就是子代理模式**：一个子代理只干一个任务（一片 / 一卷），各自独立上下文。
-示例中的 `--tools read,write` 是刻意的——只给读写，别给它联网，也别让它去翻别的片。
-实测并发 25–78 路可用，并发数、排空时间与防跑歪规则见 `docs/PARALLEL.md`。
+#### 环境变量覆盖
 
-**环境变量覆盖**（不改文件也能切模型）：
+支持通过环境变量临时覆盖 `project.json` 中的参数，无需修改配置文件：
 
 ```bash
-REFPACK_MODEL=xxx REFPACK_BASE_URL=http://... REFPACK_CONCURRENCY=32 \
-  python scripts/02_run_notes.py
+REFPACK_MODEL=deepseek-chat \
+REFPACK_BASE_URL=https://api.deepseek.com/v1 \
+REFPACK_CONCURRENCY=32 \
+python scripts/02_run_notes.py
 ```
 
-### paths 段
+---
 
-默认 `work/raw/ work/chunks/ work/notes/ work/volumes/ work/cache/ work/out/ work/logs/`，相对仓库根。
+## 2. 文风统计规则：`config/stylefit/*.json`
 
-## config/stylefit/*.json
+用于指导 `scripts/07_stylefit_index.py` 从语料中提取搭配习惯与描写特征：
 
-| 文件 | 结构 | 作用 |
+| 配置文件 | 数据格式 | 用途 |
 |---|---|---|
-| `colloc.json` | `{"概念": ["候选说法", ...]}` | **搭配表**，最高杠杆。0 次的说法进雷区 |
-| `words.json` | `{"概念": ["词", ...]}` | 用词表；0 次的进零频黑名单 |
-| `intents.json` | `{"意思名": "正则"}` | 描写意图样本，回答「这个意图书里怎么写」 |
-| `scenes.json` | `{"场景名": ["词", ...]}` | 场景词典，写同类场景前查 |
-| `funcs.json` | `{"功能桶": "正则"}` | 可选，覆盖内置的台词功能桶分类 |
+| `colloc.json` | `{"动作概念": ["动词/方位候选", ...]}` | 统计高频搭配；频次为 0 的项会被标记为搭配雷区 |
+| `words.json` | `{"概念分类": ["词汇列表", ...]}` | 统计词汇分布；语料中未出现的词会列入零频黑名单 |
+| `intents.json` | `{"意图分类": "匹配正则"}` | 抽取特定描写样本（如心理活动、神态描写） |
+| `scenes.json` | `{"场景名称": ["特征词", ...]}` | 构建特定场景的描写词典与上下文样本 |
+| `funcs.json` | `{"功能分类": "匹配正则"}` | 自定义台词功能桶分类（可选，默认使用内置分类） |
 
-命名以 `_` 开头的键会被跳过，用来写注释。
+> **说明**：JSON 文件中以 `_` 开头的键会被自动忽略，可作为注释字段使用。
 
-## config/prompts/*.txt
+---
 
-| 文件 | 阶段 | 占位符 |
+## 3. 提示词模板：`config/prompts/*.txt`
+
+流水线各阶段使用的 Prompt 模版。运行时由系统自动填充上下文占位符：
+
+| 模板文件名 | 执行阶段 | 可用占位符 |
 |---|---|---|
-| `stage1_note.txt` | 一层摘要 | `{name} {person} {chunk_no} {chunk_file} {h1} {first} {last} {chunk_text}` |
-| `stage2_volume.txt` | 二层卷纪要 | `{name} {unit} {label} {notes}` |
-| `meta_positioning.txt` | 作品定位 | `{name} {material}` |
-| `meta_world.txt` | 世界观与设定 | `{name} {material}` |
-| `meta_factions.txt` | 势力阵营 | `{name} {material}` |
-| `meta_characters.txt` | 角色档案 | `{name} {material}` |
-| `meta_ending.txt` | 结局现状卡 | `{name} {material}` |
-| `meta_foreshadow.txt` | 伏笔与分叉点 | `{name} {material}` |
+| `stage1_note.txt` | Stage 2（分片一层摘要） | `{name}`, `{person}`, `{chunk_no}`, `{chunk_file}`, `{h1}`, `{first}`, `{last}`, `{chunk_text}` |
+| `stage2_volume.txt` | Stage 5（分卷二层纪要） | `{name}`, `{unit}`, `{label}`, `{notes}` |
+| `meta_positioning.txt` | Stage 5 `--meta`（作品定位） | `{name}`, `{material}` |
+| `meta_world.txt` | Stage 5 `--meta`（世界观设定） | `{name}`, `{material}` |
+| `meta_factions.txt` | Stage 5 `--meta`（势力阵营） | `{name}`, `{material}` |
+| `meta_characters.txt` | Stage 5 `--meta`（角色档案） | `{name}`, `{material}` |
+| `meta_ending.txt` | Stage 5 `--meta`（结局状态卡） | `{name}`, `{material}` |
+| `meta_foreshadow.txt` | Stage 5 `--meta`（伏笔与分歧） | `{name}`, `{material}` |
 
-新增 `meta_xxx.txt` 会自动被 `05_run_volumes.py --meta` 发现并执行。
+> **扩展**：在 `config/prompts/` 下新增 `meta_*.txt` 文件后，`python scripts/05_run_volumes.py --meta` 会自动扫描并纳入归纳流程。
 
-## config/bans.md
+---
 
-原样嵌进「例子集」和「整书总结」的开头。写模型每次都会犯的错，
-一条一句，出现新的 OOC 就回填。这是整套东西里投入产出比最高的一份文件。
+## 4. 负向规则配置：`config/bans.md`
+
+用于收纳生成文本时严禁犯下的错误（如设定冲突、严重 OOC、高频 AI 腔句式）。
+该文件内容会在生成阶段完整嵌入到《整书总结》与《例子集》的开篇位置，作为大模型写作时的首要负面清单。
