@@ -21,8 +21,9 @@ class TestE2ESmoke(EnvRestore):
         novel, n_ch, last_tag = generate_novel()
         self.assertEqual(n_ch, N_CH)
         self.assertGreaterEqual(n_ch, 100)
-        cmd = "%s %s --prompt {prompt_file} --out {out_file}" % (
-            shlex.quote(sys.executable), shlex.quote(FAKE))
+        py_exe = '"%s"' % sys.executable if os.name == "nt" else shlex.quote(sys.executable)
+        fake_py = '"%s"' % FAKE if os.name == "nt" else shlex.quote(FAKE)
+        cmd = "%s %s --prompt {prompt_file} --out {out_file}" % (py_exe, fake_py)
         with TempProject(
             name="北境夜话",
             chunk_chars=400,
@@ -48,11 +49,11 @@ class TestE2ESmoke(EnvRestore):
             env["REFPACK_CONFIG"] = tp.cfg_path
             env["PAR"] = "8"
             r = subprocess.run(
-                ["bash", os.path.join(ROOT, "scripts", "12_run_all.sh")],
-                cwd=ROOT, env=env, capture_output=True, text=True)
+                [sys.executable, "-X", "utf8", os.path.join(ROOT, "scripts", "12_run_all.py")],
+                cwd=ROOT, env=env, capture_output=True, text=True, errors="replace")
             if r.returncode != 0:
-                self.fail("12_run_all.sh 失败（exit %s）\nSTDOUT:\n%s\nSTDERR:\n%s" % (
-                    r.returncode, r.stdout[-4000:], r.stderr[-4000:]))
+                self.fail("12_run_all.py 失败（exit %s）\nSTDOUT:\n%s\nSTDERR:\n%s" % (
+                    r.returncode, (r.stdout or "")[-4000:], (r.stderr or "")[-4000:]))
 
             secs = textio.read_json(os.path.join(tp.work, "raw", "sections.json"), [])
             h1 = [s for s in secs if s.get("level") == 1]

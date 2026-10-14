@@ -23,7 +23,10 @@ class TestRenderCommand(unittest.TestCase):
             "out_file": "/tmp/c d/o.txt",
         })
         self.assertIn("a b", out)
-        self.assertIn("'", out)
+        if os.name == "nt":
+            self.assertIn('"', out)
+        else:
+            self.assertIn("'", out)
 
     def test_respects_existing_double_quotes(self):
         tpl = 'cat "{prompt_file}" > "{out_file}"'
@@ -43,7 +46,7 @@ class TestCommandBackend(unittest.TestCase):
     def test_copies_prompt_to_out_file(self):
         td = tempfile.mkdtemp()
         dest = os.path.join(td, "nested", "missing", "out.md")
-        b = self._backend("%s -c 'import shutil,sys; shutil.copy(sys.argv[1], sys.argv[2])' {prompt_file} {out_file}"
+        b = self._backend("%s -c \"import shutil,sys; shutil.copy(sys.argv[1], sys.argv[2])\" {prompt_file} {out_file}"
                           % sys.executable)
         got = b("你好世界", out_file=dest)
         self.assertEqual(got, "你好世界")
@@ -54,7 +57,8 @@ class TestCommandBackend(unittest.TestCase):
         td = tempfile.mkdtemp()
         dest = os.path.join(td, "out.md")
         textio.write_text(dest, "旧结果应保留\n")
-        b = self._backend("echo hi > {out_file}; exit 1")
+        cmd = "%s -c \"import sys; open(sys.argv[1], 'w').write('hi'); sys.exit(1)\" {out_file}" % sys.executable
+        b = self._backend(cmd)
         with self.assertRaises(RuntimeError) as ctx:
             b("x", out_file=dest)
         self.assertIn("exit 1", str(ctx.exception))

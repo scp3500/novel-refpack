@@ -74,6 +74,7 @@ cp config/project.example.json config/project.json
   - `{out_file}`：期望产物输出文件路径。若命令结束时该文件未生成，系统默认捕获进程的 stdout 作为结果。
   - `{chunk_file}`：当前分片对应的文本文件路径。
 - **权限建议**：子代理仅需开放本地文件读写权限，避免赋予网络访问权限以保证执行确定性。
+- **跨平台与 Windows 注意事项**：Windows 的 `cmd.exe` 不支持使用单引号 `'` 包裹路径或参数，命令模板中如需包裹请统一使用双引号 `"`。系统针对 `{prompt_file}` 等占位符已内置跨平台引号适配（Windows 自动转换为双引号转义，POSIX 系统使用单引号）。
 
 #### 环境变量覆盖
 

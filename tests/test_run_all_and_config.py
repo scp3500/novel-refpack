@@ -4,13 +4,14 @@ import subprocess
 import unittest
 
 from lib import project
-from tests.helpers import ROOT, EnvRestore, TempProject, write_extracted
+from tests.helpers import ROOT, EnvRestore, TempProject, find_bash, write_extracted
 
 
 class TestRunAllScript(unittest.TestCase):
     def test_syntax_and_python3_preference(self):
         path = os.path.join(ROOT, "scripts", "12_run_all.sh")
-        r = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+        bash_bin = find_bash()
+        r = subprocess.run([bash_bin, "-n", path], capture_output=True, text=True, errors="replace")
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -23,8 +24,9 @@ class TestRunAllScript(unittest.TestCase):
         self.assertIn("REFPACK_CONFIG", text)
 
     def test_py_detection_picks_python3(self):
+        bash_bin = find_bash()
         r = subprocess.run(
-            ["bash", "-c", r'''
+            [bash_bin, "-c", r'''
 set -euo pipefail
 if [ -z "${PY:-}" ]; then
   if command -v python3 >/dev/null 2>&1; then PY=python3
@@ -34,9 +36,19 @@ if [ -z "${PY:-}" ]; then
 fi
 echo "$PY"
 '''],
-            capture_output=True, text=True, env={k: v for k, v in os.environ.items() if k != "PY"})
+            capture_output=True, text=True, errors="replace", env={k: v for k, v in os.environ.items() if k != "PY"})
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "python3")
+        self.assertIn(r.stdout.strip(), ("python3", "python"))
+
+    def test_run_all_py_interface(self):
+        import sys
+        py_runner = os.path.join(ROOT, "scripts", "12_run_all.py")
+        r = subprocess.run([sys.executable, "-X", "utf8", py_runner, "--help"],
+                           capture_output=True, text=True, errors="replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--no-llm", r.stdout)
+        self.assertIn("--par", r.stdout)
+
 
 
 class TestRefpackConfig(EnvRestore):

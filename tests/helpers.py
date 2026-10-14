@@ -162,3 +162,23 @@ class EnvRestore(unittest.TestCase):
             if k not in self._env:
                 del os.environ[k]
         os.environ.update(self._env)
+
+
+def find_bash():
+    """寻找真正的 bash，避开 Windows System32 下的假 bash (WSL stub)。"""
+    import shutil
+    b = shutil.which("bash")
+    win_dir = os.environ.get("SystemRoot", "C:\\Windows").lower()
+    if b and not b.lower().startswith(win_dir):
+        return b
+    pf = os.environ.get("ProgramFiles", "C:\\Program Files")
+    pf86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    for candidate in [
+        os.path.join(pf, "Git", "bin", "bash.exe"),
+        os.path.join(pf, "Git", "usr", "bin", "bash.exe"),
+        os.path.join(pf86, "Git", "bin", "bash.exe"),
+        os.path.join(pf86, "Git", "usr", "bin", "bash.exe"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return b or "bash"

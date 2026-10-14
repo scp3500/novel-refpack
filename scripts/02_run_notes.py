@@ -69,11 +69,15 @@ def main():
     def work(n, j):
         body = textio.read_text(j["chunk"])
         m = j["meta"]
+        try:
+            chunk_display = os.path.relpath(j["chunk"], ROOT).replace("\\", "/")
+        except ValueError:
+            chunk_display = j["chunk"].replace("\\", "/")
         prompt = project.prompt(
             cfg, "stage1_note",
             name=cfg.get("name", ""),
             person="第一人称" if cfg.get("person") == "first" else "第三人称",
-            chunk_file=os.path.relpath(j["chunk"], ROOT).replace("\\", "/"),
+            chunk_file=chunk_display,
             chunk_no="%02d" % n,
             h1=m.get("h1") or "", first=m.get("first") or "", last=m.get("last") or "",
             chunk_text=body)
