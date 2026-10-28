@@ -208,7 +208,7 @@ def extract_docx(path, drop):
     return out, heads, len(paras)
 
 
-TXT_HEAD = re.compile(r"^\s*(第[0-9零一二三四五六七八九十百千两]+[卷部章话回节])[\s　]*([^\n]{0,50})$")
+TXT_HEAD = re.compile(r"^\s*(第[0-9零一二三四五六七八九十百千两]+[卷部章话回节])[\s　]*(?!课)([^\n]{0,50})$")
 TXT_H1 = re.compile(r"^\s*(第[0-9零一二三四五六七八九十百千两]+[卷部])[\s　]*([^\n]{0,60})$")
 
 

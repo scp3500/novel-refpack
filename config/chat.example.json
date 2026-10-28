@@ -1,0 +1,35 @@
+{
+  "name": "tieba_deepseek",
+  "mode": "chat",
+  "source": "E:/pi_agent/tools/tieba-cli/hot_comments.json",
+  "format": "tieba_json",
+
+  "target_user": "",
+  "min_chars": 2,
+  "max_chars": 200,
+
+  "drop_title_patterns": [
+    "水楼", "求助水", "氵楼", "签到", "无限池"
+  ],
+
+  "drop_text_patterns": [
+    "^\\d+$",
+    "^[a-zA-Z]$",
+    "^6+$",
+    "^\\?+$",
+    "^\\[动画表情\\]$",
+    "^\\[图片\\]$"
+  ],
+
+  "llm": {
+    "backend": "openai",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "timeout": 300,
+    "retries": 3,
+    "concurrency": 8
+  }
+}

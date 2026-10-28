@@ -3,6 +3,7 @@ work/
 
 # 项目配置（含本机路径，可能含 API key）
 config/project.json
+config/chat.json
 
 # Python
 __pycache__/
