@@ -30,7 +30,7 @@ class TestE2ESmoke(EnvRestore):
             llm={
                 "backend": "command",
                 "command": cmd,
-                "concurrency": 8,
+                "concurrency": 24,
                 "timeout": 30,
                 "retries": 1,
             },
@@ -47,7 +47,7 @@ class TestE2ESmoke(EnvRestore):
             env = dict(os.environ)
             env.pop("PY", None)
             env["REFPACK_CONFIG"] = tp.cfg_path
-            env["PAR"] = "8"
+            env["PAR"] = "24"
             r = subprocess.run(
                 [sys.executable, "-X", "utf8", os.path.join(ROOT, "scripts", "12_run_all.py")],
                 cwd=ROOT, env=env, capture_output=True, text=True, errors="replace")

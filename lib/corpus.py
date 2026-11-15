@@ -11,7 +11,7 @@ import glob
 
 from .textio import natural_key
 
-CHAP = re.compile(r"^\s*第[0-9零一二三四五六七八九十百千两]+[章回节话卷]\s")
+CHAP = re.compile(r"^\s*(?:第[0-9０-９零〇一二三四五六七八九十百千两]+[章回节话卷部]|序(?:章|言|曲)|楔子|引子|尾声|终章|番外)\b")
 
 QUOTE_OPEN = ["“", "「", "『"]
 QUOTE_CLOSE = ["”", "」", "』"]
@@ -61,11 +61,11 @@ def load_corpus(path):
 
 
 def paragraphs(raw):
-    """去章节标题、空行、分隔线。"""
+    """去章节标题、空行、分隔线与 Markdown # 标题行。"""
     out = []
     for l in raw.split("\n"):
         s = l.strip()
-        if not s or CHAP.match(s):
+        if not s or s.startswith("#") or CHAP.match(s):
             continue
         if re.fullmatch(r"[-—=*~·\s　]{3,}", s):
             continue
@@ -133,3 +133,64 @@ def derive_speakers(raw, names):
                      r"([^" + "".join(re.escape(c) for c in QUOTE_CLOSE) + r"]{0,600})"
                      r"[" + "".join(re.escape(c) for c in QUOTE_CLOSE) + r"]")
     return [(m.group(1), m.group(2)) for m in pat.finditer(raw)]
+
+
+NEUTRAL_ROLES = (
+    "某甲", "某乙", "某丙", "某丁", "某戊", "某己", "某庚", "某辛",
+    "角色A", "角色B", "角色C", "角色D", "角色E", "角色F", "角色G", "角色H",
+)
+
+BRACKET_TAG_RE = re.compile(r"【[^】\n]{2,24}】")
+
+
+def build_anonymizer(names=None, aliases=None, extra_terms=None, strip_brackets=True):
+    """构造专有名词脱敏函数 anonymize(text) -> str，用于纯文风蒸馏模式剥离原书人名与设定词。
+
+    同一主名及其全部 aliases 会映射到同一个中性代称（如「某甲」），保持对话回合内指代连贯。
+    """
+    canon_order = []
+    alias_to_canon = {}
+    for n in (names or []):
+        n = (n or "").strip()
+        if n and n not in canon_order:
+            canon_order.append(n)
+    for canon, alts in (aliases or {}).items():
+        canon = (canon or "").strip()
+        if not canon:
+            continue
+        if canon not in canon_order:
+            canon_order.append(canon)
+        for a in (alts or ()):
+            a = (a or "").strip()
+            if a and a != canon:
+                alias_to_canon[a] = canon
+
+    for t in (extra_terms or []):
+        t = (t or "").strip()
+        if t and t not in canon_order and t not in alias_to_canon:
+            canon_order.append(t)
+
+    role_map = {}
+    for idx, c in enumerate(canon_order):
+        label = NEUTRAL_ROLES[idx] if idx < len(NEUTRAL_ROLES) else ("角色%d" % (idx + 1))
+        role_map[c] = label
+    for a, c in alias_to_canon.items():
+        role_map[a] = role_map.get(c, "某甲")
+
+    if not role_map and not strip_brackets:
+        return lambda s: s, {}
+
+    keys = sorted(role_map.keys(), key=len, reverse=True)
+    name_pat = re.compile("|".join(re.escape(k) for k in keys)) if keys else None
+
+    def _clean(s):
+        if not s:
+            return s
+        out = s
+        if name_pat is not None:
+            out = name_pat.sub(lambda m: role_map[m.group(0)], out)
+        if strip_brackets:
+            out = BRACKET_TAG_RE.sub("「某技能/条目」", out)
+        return out
+
+    return _clean, role_map

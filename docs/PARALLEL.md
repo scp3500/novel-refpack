@@ -49,7 +49,7 @@ python scripts/02_run_notes.py --par 32
 python scripts/02_run_notes.py --only 3,7,12
 ```
 
-运行日志按分片记录于 `work/logs/notes/chunk_NN.log`，方便单独排查网络超时与接口报错。
+运行日志按分片记录于 `work/logs/notes/notes-<任务编号>.log`（如 `notes-1.log`），方便单独排查网络超时与接口报错。
 
 ### 模式 B：子代理 / CLI 命令模式
 

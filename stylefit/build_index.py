@@ -53,11 +53,30 @@ def bucket(t, funcs):
     return "陈述说明"
 
 
-def quantile_pick(v, k=6):
+def _head8(s):
+    return re.sub(r"[^\u4e00-\u9fff]", "", s)[:8]
+
+
+def _head4(s):
+    return re.sub(r"\s", "", s)[:4]
+
+
+def quantile_pick(v, k=16):
     v = sorted(v, key=len)
     n = len(v)
+    if n == 0:
+        return []
     picked = [v[min(n - 1, int(n * i / k))] for i in range(1, k)]
-    return list(dict.fromkeys(picked))
+    out, seen_full, seen_head = [], set(), set()
+    for item in picked:
+        h = _head4(item)
+        if item in seen_full or (h and h in seen_head):
+            continue
+        seen_full.add(item)
+        if h:
+            seen_head.add(h)
+        out.append(item)
+    return out
 
 
 def scene_of(txt, rules=None):
@@ -120,7 +139,7 @@ def main():
     narr = C.narr_sentences(paras)
     IDX = {"meta": {"corpus": a.corpus, "chars": len(B), "paras": len(paras),
                     "files": len(files), "attrib": src, "pairs": len(pairs)},
-           "台词": {}, "描写": {}, "搭配": {}, "用词": {}, "零频词": [], "场景": {},
+           "台词": {}, "描写": {}, "笔法细节": {}, "搭配": {}, "用词": {}, "零频词": [], "场景": {},
            "场景词典": {}, "统计": {}}
 
     # ── 1 人物 × 功能 ──
@@ -146,19 +165,138 @@ def main():
     f = os.path.join(a.config, "intents.json")
     if os.path.isfile(f):
         intents = json.load(open(f, encoding="utf-8"))
+
+    def _split_sents(para):
+        parts = re.findall(r"[^。！？\n]+[。！？]+|[^。！？\n]+", para)
+        return [x.strip() for x in parts if x.strip()]
+
+    def _pick_sentence_group(para, pat_re):
+        if len(para) <= 140:
+            return [para] if pat_re.search(para) else []
+        sents = _split_sents(para)
+        if not sents:
+            return []
+        groups = []
+        for idx, sent in enumerate(sents):
+            if not pat_re.search(sent):
+                continue
+            grp = sent
+            if len(grp) < 35 and idx > 0 and len(sents[idx - 1]) + len(grp) <= 140:
+                grp = sents[idx - 1] + grp
+            if len(grp) < 35 and idx + 1 < len(sents) and len(grp) + len(sents[idx + 1]) <= 140:
+                grp = grp + sents[idx + 1]
+            if len(grp) > 140:
+                if len(sent) <= 140:
+                    grp = sent
+                else:
+                    sub = [c.strip() for c in re.split(r"(?<=[，；])", sent) if c.strip()]
+                    acc = ""
+                    for seg in sub:
+                        if pat_re.search(seg):
+                            acc = seg
+                            break
+                    if not acc:
+                        acc = sub[0] if sub else sent[:140]
+                    for seg in sub:
+                        if seg == acc:
+                            continue
+                        if len(acc) >= 35:
+                            break
+                        if len(acc) + len(seg) <= 140:
+                            acc += seg
+                    grp = acc[:140]
+            if grp:
+                groups.append(grp)
+        return groups
+
     for name, pat in intents.items():
         if name.startswith("_"):
             continue
-        hits = [m.group(0).replace("\n", "")
-                for m in re.finditer(r".{0,28}(?:" + pat + r").{0,32}", raw)]
-        seen, keep = set(), []
-        for h in hits:
-            if h in seen:
+        pat_re = re.compile(pat)
+        total_hits = sum(len(pat_re.findall(p)) for p in paras)
+        cands = []
+        for p in paras:
+            if not pat_re.search(p):
                 continue
-            seen.add(h)
-            if len(keep) < 8:
-                keep.append(h)
-        IDX["描写"][name] = {"n": len(hits), "样本": keep}
+            cands.extend(_pick_sentence_group(p, pat_re))
+        seen_h, deduped = set(), []
+        for c in cands:
+            h8 = _head8(c)
+            key = h8 if h8 else c[:12]
+            if key in seen_h:
+                continue
+            seen_h.add(key)
+            deduped.append(c)
+        IDX["描写"][name] = {"n": total_hits, "样本": stride_pick(deduped, 24)}
+
+    # ── 2b 笔法细节 ──
+    has_quote_re = re.compile("[" + "".join(re.escape(c) for c in C.QUOTE_OPEN + C.QUOTE_CLOSE) + "]")
+    action_words_re = re.compile(
+        r"(?:伸手|伸出|拿|拉|推|走|看|转身|低头|抬起|放下|握|按|推开|坐下|起身|站起|迈步|扣|抓|递|接过|抬眼|抬手|点头|摇头)"
+    )
+    sensory_re = re.compile(
+        r"(?:阳光|月光|灯光|阴影|夜色|光线|昏暗|微风|风声|雨声|脚步声|敲门声|响起|传来|冰凉|滚烫|温热|粗糙|刺骨|窗外|街上|角落|空气|气味|寂静|回荡)"
+    )
+    transition_re = re.compile(
+        r"^(?:片刻之后|没过多久|很快|过了许久|半晌|第二天|次日|夜幕降临|天色渐暗|黄昏|清晨|傍晚|半小时后|等到|回到|离开|走进|来到)"
+        r"|(?:片刻之后|没过多久|第二天|夜幕降临|半小时后|等到.{2,10}的时候)"
+    )
+
+    def _dedup_stride_25(items):
+        seen_h, out = set(), []
+        for it in items:
+            h8 = _head8(it)
+            key = h8 if h8 else it[:12]
+            if key in seen_h:
+                continue
+            seen_h.add(key)
+            out.append(it)
+        return stride_pick(out, 25)
+
+    craft_action, craft_sensory, craft_trans, craft_dlg_act, craft_short = [], [], [], [], []
+    # 检测章节首段：原始文本中章节标题行后的首个非空正文段
+    chapter_first_paras = set()
+    lines_raw = raw.split("\n")
+    expect_first = False
+    for ln in lines_raw:
+        st = ln.strip()
+        if not st:
+            continue
+        if st.startswith("#") or C.CHAP.match(st):
+            expect_first = True
+            continue
+        if re.fullmatch(r"[-—=*~·\s　]{3,}", st):
+            continue
+        if expect_first:
+            chapter_first_paras.add(st)
+            expect_first = False
+
+    for p in paras:
+        plen = len(p)
+        has_q = bool(has_quote_re.search(p))
+        if not has_q:
+            comma_cnt = p.count("，")
+            if 35 <= plen <= 140 and 2 <= comma_cnt <= 4 and len(action_words_re.findall(p)) >= 2:
+                craft_action.append(p)
+            if 30 <= plen <= 140 and sensory_re.search(p):
+                craft_sensory.append(p)
+            if 20 <= plen <= 110 and (transition_re.search(p) or p in chapter_first_paras):
+                craft_trans.append(p)
+            if 8 <= plen <= 28:
+                craft_short.append(p)
+        else:
+            if 40 <= plen <= 160 and C.QUOTE.search(p):
+                narr_rest = re.sub(r"\s", "", C.QUOTE.sub("", p))
+                if len(narr_rest) >= 14:
+                    craft_dlg_act.append(p)
+
+    IDX["笔法细节"] = {
+        "连续动作白描": _dedup_stride_25(craft_action),
+        "环境与五感描写": _dedup_stride_25(craft_sensory),
+        "开篇与转场句": _dedup_stride_25(craft_trans),
+        "对话穿插动作（神态锚点）": _dedup_stride_25(craft_dlg_act),
+        "克制收尾与留白短段": _dedup_stride_25(craft_short),
+    }
 
     # ── 3 搭配表（核心）──
     coll = {}
@@ -205,7 +343,11 @@ def main():
         bs[s].append(i)
     IDX["场景"] = {}
     for s, idxs in bs.items():
-        picks = stride_pick(idxs, 4)
+        non_overlap = []
+        for idx in idxs:
+            if not non_overlap or idx - non_overlap[-1] >= 6:
+                non_overlap.append(idx)
+        picks = stride_pick(non_overlap, 18)
         IDX["场景"][s] = {
             "n": len(idxs),
             "样本": ["\n".join(paras[max(0, idx - 3):idx + 5]) for idx in picks],

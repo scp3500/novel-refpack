@@ -5,6 +5,7 @@
 所有脚本都用 `lib.project.load()` 拿配置，路径一律相对仓库根解析。
 """
 import os
+import re
 import sys
 import glob
 
@@ -27,6 +28,14 @@ DEFAULTS = {
     "drop_headings": ["简介", "制作信息", "封面及彩页"],
     "protagonist": "",
     "vol_unit_word": "卷",          # 二层归纳的单位叫法：卷 / 章 / 篇 / ARC
+    "style_only": False,            # True 时仅蒸馏通用文风，剥离原书剧情与角色绑定
+    "anonymize": False,             # True 时将角色名/设定框脱敏为中性代称（甲/乙/丙）
+    "budget": {
+        "preset": "standard",       # compact(60KB) / standard(150KB) / rich(300KB) / full(不裁剪)
+        "target_kb": None,          # 显式指定总体积 KB（覆盖 preset）
+        "max_tokens": None,         # 显式指定估算总 Token 上限（覆盖 preset）
+        "example_ratio": 0.70,      # 例子集在合并包/总预算中的占比（默认 70% 例子 : 30% 摘要）
+    },
     "llm": {},
     # 所有跑出来的东西都在 work/ 下，工具目录保持干净
     "paths": {
@@ -83,7 +92,7 @@ def load(path=None, need_source=False):
     corpus.set_quotes(cfg.get("quote_open"), cfg.get("quote_close"))
 
     for k, v in (cfg.get("paths") or {}).items():
-        cfg["paths"][k] = os.path.join(ROOT, v)
+        cfg["paths"][k] = v if os.path.isabs(v) else os.path.join(ROOT, v)
     return cfg
 
 
@@ -138,11 +147,12 @@ def chat_work_dir(cfg=None):
 
 
 def prompt(cfg, stem, **kw):
-    """读 config/prompts/<stem>.txt，做 {key} 替换。"""
+    """读 config/prompts/<stem>.txt，做单遍 {key} 替换（防书名或标题含占位符导致二次展开）。"""
     path = os.path.join(ROOT, "config", "prompts", stem + ".txt")
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     t = textio.read_text(path)
-    for k, v in kw.items():
-        t = t.replace("{" + k + "}", str(v))
-    return t
+    if not kw:
+        return t
+    pat = re.compile(r"\{(" + "|".join(re.escape(k) for k in kw) + r")\}")
+    return pat.sub(lambda m: str(kw[m.group(1)]), t)

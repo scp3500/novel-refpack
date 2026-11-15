@@ -17,7 +17,7 @@ import argparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from lib import textio
+from lib import textio, project
 
 
 async def fetch_forum_data(forum_name, thread_count=20, max_floors=10):
@@ -90,6 +90,7 @@ def main():
     parser = argparse.ArgumentParser(description="拉取指定贴吧的帖子与回复语料")
     parser.add_argument("--tieba", required=True, help="贴吧名称（如：弱智吧、孙笑川吧）")
     parser.add_argument("--count", type=int, default=25, help="拉取热门主题帖数量 (默认 25)")
+    parser.add_argument("--config", default=None, help="配置文件路径")
     parser.add_argument("--out", default=None, help="输出文件路径")
     args = parser.parse_args()
 
@@ -98,9 +99,14 @@ def main():
     if not data:
         sys.exit(1)
 
-    work_dir = os.path.join(ROOT, "work")
-    os.makedirs(work_dir, exist_ok=True)
-    out_file = args.out or os.path.join(work_dir, f"tieba_{forum}.json")
+    if args.out:
+        out_file = args.out
+        os.makedirs(os.path.dirname(os.path.abspath(out_file)), exist_ok=True)
+    else:
+        cfg = project.load_chat_config(args.config)
+        work_dir = project.chat_work_dir(cfg)
+        os.makedirs(work_dir, exist_ok=True)
+        out_file = os.path.join(work_dir, f"tieba_{forum}.json")
 
     textio.write_json(out_file, data)
     print(f"\n抓取完成！共抓取 {len(data)} 个主题帖数据。")

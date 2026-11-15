@@ -3,6 +3,7 @@
 #
 #   bash scripts/12_run_all.sh              # 全跑
 #   bash scripts/12_run_all.sh --no-llm     # 只跑不花钱的部分（抽文本→分片→建索引→两份成品）
+#   bash scripts/12_run_all.sh --style-only # 纯文风模式（跳过 LLM 摘要与卷映射，直出纯文风包）
 #   PAR=32 bash scripts/12_run_all.sh       # 覆盖并发数
 #
 # 环境变量：PY（python 命令，默认先找 python3 再找 python）、PAR（并发数，默认用 config 里的值）、
@@ -21,27 +22,46 @@ if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/
   exit 2
 fi
 SKIP_LLM=0
+STYLE_ONLY=0
+EXTRA_STYLE_ARGS=()
 for arg in "$@"; do
-  [ "$arg" = "--no-llm" ] && SKIP_LLM=1
+  case "$arg" in
+    --no-llm) SKIP_LLM=1 ;;
+    --style-only) STYLE_ONLY=1; EXTRA_STYLE_ARGS+=("--style-only") ;;
+    --anonymize|--no-anonymize) EXTRA_STYLE_ARGS+=("$arg") ;;
+  esac
 done
 
 run() { echo "=== $1 ==="; shift; "$PY" -X utf8 "$@"; }
 
 run "0 抽文本"            scripts/00_extract.py
 run "1 分片"              scripts/01_split.py
-if [ "$SKIP_LLM" = 0 ]; then
-  run "2 一层摘要（并发，一片一个任务）" scripts/02_run_notes.py ${PAR:+--par "$PAR"}
+
+if [ "$STYLE_ONLY" = 1 ]; then
+  if "$PY" -X utf8 -c 'import sys; sys.path.insert(0,"."); from lib import project; c=project.load(); sys.exit(0 if (c.get("names") or c.get("aliases")) else 1)' 2>/dev/null; then
+    run "6 台词归属"        scripts/06_build_attrib.py
+  else
+    echo "=== 6 台词归属（已跳过：未配置 names/aliases，交由 07 自动识别） ==="
+  fi
+  run "7 文风索引"          scripts/07_stylefit_index.py
+  run "8 生成纯文风例子集"  scripts/09_build_examples.py "${EXTRA_STYLE_ARGS[@]}"
+  run "9 生成纯文风单文件包" scripts/13_build_pack.py --no-rebuild "${EXTRA_STYLE_ARGS[@]}"
+else
+  if [ "$SKIP_LLM" = 0 ]; then
+    run "2 一层摘要（并发，一片一个任务）" scripts/02_run_notes.py ${PAR:+--par "$PAR"}
+  fi
+  run "3 汇总 + 片尾覆盖率校验" scripts/03_merge_notes.py
+  run "4 卷映射"            scripts/04_build_volume_map.py
+  if [ "$SKIP_LLM" = 0 ]; then
+    run "5 二层卷纪要（并发）" scripts/05_run_volumes.py ${PAR:+--par "$PAR"}
+    run "5b 元章节（世界观/角色/势力/结局/伏笔）" scripts/05_run_volumes.py --meta ${PAR:+--par "$PAR"}
+  fi
+  run "6 台词归属"          scripts/06_build_attrib.py
+  run "7 文风索引"          scripts/07_stylefit_index.py
+  run "8 生成例子集"        scripts/09_build_examples.py ${EXTRA_STYLE_ARGS[@]+"${EXTRA_STYLE_ARGS[@]}"}
+  run "9 生成整书总结"      scripts/10_build_summary.py
+  run "10 合并生成参考包"   scripts/13_build_pack.py --no-rebuild ${EXTRA_STYLE_ARGS[@]+"${EXTRA_STYLE_ARGS[@]}"}
 fi
-run "3 汇总 + 片尾覆盖率校验" scripts/03_merge_notes.py
-run "4 卷映射"            scripts/04_build_volume_map.py
-if [ "$SKIP_LLM" = 0 ]; then
-  run "5 二层卷纪要（并发）" scripts/05_run_volumes.py ${PAR:+--par "$PAR"}
-  run "5b 元章节（世界观/角色/势力/结局/伏笔）" scripts/05_run_volumes.py --meta ${PAR:+--par "$PAR"}
-fi
-run "6 台词归属"          scripts/06_build_attrib.py
-run "7 文风索引"          scripts/07_stylefit_index.py
-run "8 生成例子集"        scripts/09_build_examples.py
-run "9 生成整书总结"      scripts/10_build_summary.py
 
 echo
 echo "产物："

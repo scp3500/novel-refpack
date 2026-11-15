@@ -4,7 +4,7 @@
 
   python scripts/08_stylefit_query.py --list
   python scripts/08_stylefit_query.py --stats
-  python scripts/08_stylefit_query.py --who 白夜 --func 让步接受
+  python scripts/08_stylefit_query.py --who 主角 --func 让步接受
   python scripts/08_stylefit_query.py --colloc 耳朵的动作
   python scripts/08_stylefit_query.py --zero
 

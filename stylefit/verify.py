@@ -181,6 +181,7 @@ def main():
         except OSError:
             sig_parts.append((fp, 0, 0))
     sig_parts.append(("quotes", tuple(C.QUOTE_OPEN), tuple(C.QUOTE_CLOSE)))
+    sig_parts.append(("ver", 2))
     corpus_sig = hashlib.sha256(repr(sig_parts).encode("utf-8")).hexdigest()[:16]
     cache_path = os.path.join(a.out, "verify_cache.pkl")
     cached = None
@@ -235,8 +236,16 @@ def main():
                 dlines.append(x)
         random.Random(9).shuffle(nlines)
         random.Random(11).shuffle(dlines)
-        n_cal, n_tr = nlines[:2500], nlines[2500:22000]
-        d_cal, d_tr = dlines[:4000], dlines[4000:24000]
+        if len(nlines) >= 5000:
+            n_cal, n_tr = nlines[:2500], nlines[2500:80000]
+        else:
+            cut_n = max(1, len(nlines) // 5)
+            n_cal, n_tr = nlines[:cut_n], nlines[cut_n:]
+        if len(dlines) >= 8000:
+            d_cal, d_tr = dlines[:4000], dlines[4000:80000]
+        else:
+            cut_d = max(1, len(dlines) // 5)
+            d_cal, d_tr = dlines[:cut_d], dlines[cut_d:]
         MN, MD = train_ngram(n_tr), train_ngram(d_tr)
         CAL = {}
         for tag, M, lines in (("n", MN, n_cal), ("d", MD, d_cal)):

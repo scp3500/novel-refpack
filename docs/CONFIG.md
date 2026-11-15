@@ -1,10 +1,10 @@
 # 配置说明
 
-项目通过 `config/` 目录管理任务参数、模型调用后端、文风统计词典与提示词模板。
+项目通过 `config/` 目录管理小说流水线参数（`project.json`）、群聊/贴吧蒸馏参数（`chat.json`）、文风统计词典（`stylefit/*.json`）与提示词模板（`prompts/*.txt`）。
 
 ---
 
-## 1. 项目基础配置：`config/project.json`
+## 1. 小说项目配置：`config/project.json`
 
 从模板初始化：
 ```bash
@@ -13,52 +13,63 @@ cp config/project.example.json config/project.json
 
 该文件已列入 `.gitignore`，包含本地文件路径与模型访问参数。
 
-### 字段说明
+### 核心字段
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `name` | string | 必填 | 书名或项目代号，用作输出目录与文档主标题 |
+| `name` | string | 必填 | 书名或项目代号，用作缓存目录与产物主标题 |
 | `source` | string | 必填 | 语料文件路径，支持 `.epub`、`.docx`、`.txt` |
 | `chunk_chars` | int | `60000` | 单分片目标字数 |
-| `quote_open` | list | `["“", "「", "『"]` | 台词前引号。建议仅保留书内实际使用的符号 |
-| `quote_close` | list | `["”", "」", "』"]` | 台词后引号。需与 `quote_open` 配对 |
-| `person` | string | `"third"` | 叙述人称（`"first"` 或 `"third"`），注入提示词供模型对齐视点 |
+| `quote_open` | list | `["“", "「", "『"]` | 台词前引号（建议仅保留书内实际使用的符号） |
+| `quote_close` | list | `["”", "」", "』"]` | 台词后引号（需与 `quote_open` 配对） |
+| `person` | string | `"third"` | 叙述人称（`"first"` / `"third"`），注入提示词供模型对齐 |
 | `protagonist` | string | `""` | 主角名称 |
-| `vol_unit_word` | string | `"卷"` | 二层剧情归纳单位（如：卷、章、篇、ARC） |
-| `names` | list | `[]` | 角色名列表，用于台词归属统计与角色档案归纳 |
-| `drop_headings` | list | `["简介", "制作信息", "封面及彩页"]` | 文本抽取阶段直接丢弃的无正文标题 |
+| `vol_unit_word` | string | `"卷"` | 二层归纳单位（如：卷、章、篇、ARC） |
+| `names` | list | `[]` | 角色名列表，用于台词归属统计、人物档案与纯文风脱敏 |
+| `aliases` | object | `{}` | 角色别名映射 `{"主名": ["别名1", "昵称2"]}`，归属统计自动合并到主名 |
+| `bans_file` | string | `"config/bans.md"` | 负向禁区规则文件路径（相对仓库根或绝对路径），每本书建议指向私有文件避免污染仓库 |
+| `drop_headings` | list | `["简介", "制作信息", "封面及彩页"]` | 抽取阶段直接丢弃的无正文标题 |
+| `style_only` | bool | `false` | 为 `true` 时默认走纯文风蒸馏模式，剥离原书剧情绑定 |
+| `anonymize` | bool | `false` | 为 `true` 时将摘录中的角色名脱敏为「某甲/某乙……」，`【条目框】` 替换为「某技能/条目」 |
+| `budget` | object | 见下文 | 容量预算、估算 Token 与例子/摘要占比控制 |
 | `hard_settings` | list | `[]` | 注入《整书总结》开头的硬设定条目（建议 5-10 条） |
-| `if_points` | list | `[]` | 注入《整书总结》开头的分歧点条目 |
+| `if_points` | list | `[]` | 注入《整书总结》开头的 IF 分歧点条目 |
+| `meta_material_chars` | int | `60000` | `05_run_volumes.py --meta` 喂给元章节的最大材料字数 |
+| `volume_note_char_limit` | int | `9000` | `05_run_volumes.py` 读入单份分片摘要时的最大字数上限 |
 | `llm` | object | 见下文 | 大模型调用后端配置 |
 | `paths` | object | 可选 | 产物目录映射，默认指向 `work/` 下各子目录 |
 
-### llm 后端配置
+### `budget` 容量与配比配置
 
-支持两种调用后端：**OpenAI 兼容接口** 与 **外部 CLI 命令**。
+```jsonc
+"budget": {
+  "preset": "standard",     // compact(60KB) / standard(150KB) / rich(300KB) / full(不限)
+  "target_kb": null,        // 显式指定目标总 KB（优先级高于 preset）
+  "max_tokens": null,       // 显式指定估算总 Token 上限（优先级高于 preset）
+  "example_ratio": 0.70     // 例子占总预算比例，默认 0.70（70% 例子 : 30% 摘要）
+}
+```
+
+### `llm` 后端配置
 
 #### A. OpenAI 兼容接口（API / 本地引擎）
-
-适用于云端大模型、vLLM、Ollama、LM Studio 等服务：
-
 ```jsonc
 "llm": {
   "backend": "openai",
   "base_url": "https://api.example.com/v1",
-  "api_key_env": "OPENAI_API_KEY",   // 读取 API Key 的环境变量名
+  "api_key_env": "OPENAI_API_KEY",
   "model": "gpt-4o-mini",
-  "temperature": 0.3,
+  "temperature": 0.3,       // 设为 null 则不发送 temperature 字段（兼容部分推理模型）
   "max_tokens": 4096,
   "timeout": 600,
   "retries": 3,
   "concurrency": 16,
-  "extra_body": {}                    // 传递给底层的额外请求体参数
+  "strip_think": true,      // 自动剥离输出中的 <think>...</think> 推理块
+  "extra_body": {}
 }
 ```
 
 #### B. 外部 CLI 命令（子代理 / 本地 Agent）
-
-适用于调用本地 Agent 命令行工具执行独立会话：
-
 ```jsonc
 "llm": {
   "backend": "command",
@@ -69,62 +80,46 @@ cp config/project.example.json config/project.json
 }
 ```
 
-- **命令占位符**：
-  - `{prompt_file}`：当前任务的提示词临时文件路径。
-  - `{out_file}`：期望产物输出文件路径。若命令结束时该文件未生成，系统默认捕获进程的 stdout 作为结果。
-  - `{chunk_file}`：当前分片对应的文本文件路径。
-- **权限建议**：子代理仅需开放本地文件读写权限，避免赋予网络访问权限以保证执行确定性。
-- **跨平台与 Windows 注意事项**：Windows 的 `cmd.exe` 不支持使用单引号 `'` 包裹路径或参数，命令模板中如需包裹请统一使用双引号 `"`。系统针对 `{prompt_file}` 等占位符已内置跨平台引号适配（Windows 自动转换为双引号转义，POSIX 系统使用单引号）。
-
-#### 环境变量覆盖
-
-支持通过环境变量临时覆盖 `project.json` 中的参数，无需修改配置文件：
-
-```bash
-REFPACK_MODEL=deepseek-chat \
-REFPACK_BASE_URL=https://api.deepseek.com/v1 \
-REFPACK_CONCURRENCY=32 \
-python scripts/02_run_notes.py
-```
+- **命令占位符**：`{prompt_file}`、`{out_file}`、`{chunk_file}`（若未写出 `{out_file}` 则回退捕获 stdout）。
+- **Windows 注意**：`cmd.exe` 不支持单引号，命令模板需包路径时请统一使用双引号 `"`。
+- **环境变量覆盖**：`REFPACK_CONFIG`、`REFPACK_MODEL`、`REFPACK_BASE_URL`、`REFPACK_BACKEND`、`REFPACK_CONCURRENCY`。
 
 ---
 
-## 2. 文风统计规则：`config/stylefit/*.json`
+## 2. 群聊 / 贴吧配置：`config/chat.json`
 
-用于指导 `scripts/07_stylefit_index.py` 从语料中提取搭配习惯与描写特征：
+从 `config/chat.example.json` 复制修改，可通过 `CHAT_CONFIG` 环境变量或 `--config` 指定：
+
+| 字段 | 说明 |
+|---|---|
+| `source` | 贴吧导出 JSON 或 QQ 群导出 TXT 路径 |
+| `work_dir` | chat 流水线工作目录（默认 `"work"`，输出 `<work_dir>/out/群聊人设提示词.md`） |
+| `format` | `"tieba_json"` 或 `"qq_txt"` |
+| `target_user` | 可选，仅提取指定用户的发言进行蒸馏 |
+| `min_chars` / `max_chars` | 过滤过短或过长刷屏回复的长度边界 |
+| `drop_title_patterns` / `drop_text_patterns` | 过滤水楼、签到帖、纯数字与表情占位符的正则列表 |
+
+---
+
+## 3. 文风统计规则：`config/stylefit/*.json`
+
+用于指导 `stylefit/build_index.py` 与 `09_build_examples.py` 提取搭配、描写与专项摘录：
 
 | 配置文件 | 数据格式 | 用途 |
 |---|---|---|
-| `colloc.json` | `{"动作概念": ["动词/方位候选", ...]}` | 统计高频搭配；频次为 0 的项会被标记为搭配雷区 |
-| `words.json` | `{"概念分类": ["词汇列表", ...]}` | 统计词汇分布；语料中未出现的词会列入零频黑名单 |
-| `intents.json` | `{"意图分类": "匹配正则"}` | 抽取特定描写样本（如心理活动、神态描写） |
-| `scenes.json` | `{"场景名称": ["特征词", ...]}` | 构建特定场景的描写词典与上下文样本 |
-| `funcs.json` | `{"功能分类": "匹配正则"}` | 自定义台词功能桶分类（可选，默认使用内置分类） |
+| `colloc.json` | `{"动作概念": ["候选说法", ...]}` | 统计 18 类通用高频动作搭配；0 次出现项标记为搭配雷区 |
+| `words.json` | `{"概念分类": ["词汇列表", ...]}` | 统计词汇分布；0 次出现项列入零频黑名单 |
+| `intents.json` | `{"意图分类": "匹配正则"}` | 抽取 18 类描写意图完整句群样本 |
+| `scenes.json` | `{"场景名称": ["特征词", ...]}` | 构建场景词典（含常用/少用/禁用三档） |
+| `topics.json` | `{"主题名": "匹配正则"}` | `09_build_examples.py` 专项摘录主题（默认模式下使用） |
+| `scene_rules.json` | `{"场景名": "匹配正则"}` | 可选，自定义 `build_index.py` 划分场景片段的规则 |
+| `funcs.json` | `{"功能分类": "匹配正则"}` | 可选，覆盖默认台词功能桶分类规则 |
 
-> **说明**：JSON 文件中以 `_` 开头的键会被自动忽略，可作为注释字段使用。
-
----
-
-## 3. 提示词模板：`config/prompts/*.txt`
-
-流水线各阶段使用的 Prompt 模版。运行时由系统自动填充上下文占位符：
-
-| 模板文件名 | 执行阶段 | 可用占位符 |
-|---|---|---|
-| `stage1_note.txt` | Stage 2（分片一层摘要） | `{name}`, `{person}`, `{chunk_no}`, `{chunk_file}`, `{h1}`, `{first}`, `{last}`, `{chunk_text}` |
-| `stage2_volume.txt` | Stage 5（分卷二层纪要） | `{name}`, `{unit}`, `{label}`, `{notes}` |
-| `meta_positioning.txt` | Stage 5 `--meta`（作品定位） | `{name}`, `{material}` |
-| `meta_world.txt` | Stage 5 `--meta`（世界观设定） | `{name}`, `{material}` |
-| `meta_factions.txt` | Stage 5 `--meta`（势力阵营） | `{name}`, `{material}` |
-| `meta_characters.txt` | Stage 5 `--meta`（角色档案） | `{name}`, `{material}` |
-| `meta_ending.txt` | Stage 5 `--meta`（结局状态卡） | `{name}`, `{material}` |
-| `meta_foreshadow.txt` | Stage 5 `--meta`（伏笔与分歧） | `{name}`, `{material}` |
-
-> **扩展**：在 `config/prompts/` 下新增 `meta_*.txt` 文件后，`python scripts/05_run_volumes.py --meta` 会自动扫描并纳入归纳流程。
+> **说明**：JSON 中以 `_` 开头的键会被忽略，可用作注释。
 
 ---
 
-## 4. 负向规则配置：`config/bans.md`
+## 4. 提示词模板与负向禁区
 
-用于收纳生成文本时严禁犯下的错误（如设定冲突、严重 OOC、高频 AI 腔句式）。
-该文件内容会在生成阶段完整嵌入到《整书总结》与《例子集》的开篇位置，作为大模型写作时的首要负面清单。
+- `config/prompts/stage1_note.txt`、`stage2_volume.txt`、`meta_*.txt`：一/二层摘要与元章节提示词（新增 `meta_*.txt` 会被 `05_run_volumes.py --meta` 自动发现）。
+- `config/bans.md`：通用反 AI 腔与句式纪律模板。为具体小说定制角色/设定禁区时，建议在 `config/project.json` 中通过 `"bans_file"` 指向私有文件，避免公开提交具体作品设定。

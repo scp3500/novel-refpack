@@ -18,6 +18,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+from lib import budget, project, textio      # noqa: E402
 
 
 def run_step(desc, script_name, *args, env=None):
@@ -38,6 +40,10 @@ def main():
     parser.add_argument("--no-llm", action="store_true", help="只跑不调模型的步骤")
     parser.add_argument("--par", type=int, default=None, help="并发任务数")
     parser.add_argument("--config", default=None, help="指定 project.json 路径")
+    budget.add_budget_args(parser)
+    parser.add_argument("--style-only", action="store_true", help="纯文风模式：跳过 LLM 摘要与卷映射，直接提取脱敏文风包")
+    parser.add_argument("--anonymize", action="store_true", help="人名脱敏为中性代称")
+    parser.add_argument("--no-anonymize", action="store_true", help="禁用人名脱敏")
     args = parser.parse_args()
 
     env = dict(os.environ)
@@ -51,54 +57,96 @@ def main():
 
     cfg_arg = ["--config", env["REFPACK_CONFIG"]] if "REFPACK_CONFIG" in env else []
 
+    cfg = {}
+    try:
+        cfg = project.load(env.get("REFPACK_CONFIG"))
+    except SystemExit:
+        pass
+
+    style_only = bool(args.style_only or cfg.get("style_only"))
+
+    budget_args = []
+    if args.preset:
+        budget_args += ["--preset", args.preset]
+    if args.kb is not None:
+        budget_args += ["--kb", str(args.kb)]
+    if args.max_tokens is not None:
+        budget_args += ["--max-tokens", str(args.max_tokens)]
+    if args.ratio is not None:
+        budget_args += ["--ratio", str(args.ratio)]
+
+    style_args = []
+    if style_only:
+        style_args.append("--style-only")
+    if args.anonymize:
+        style_args.append("--anonymize")
+    elif args.no_anonymize:
+        style_args.append("--no-anonymize")
+
     # 0 抽文本
     run_step("0 抽文本", "00_extract.py", *cfg_arg, env=env)
 
     # 1 分片
     run_step("1 分片", "01_split.py", *cfg_arg, env=env)
 
-    # 2 一层摘要
-    if not args.no_llm:
-        run_step("2 一层摘要（并发，一片一个任务）", "02_run_notes.py", *(cfg_arg + par_arg), env=env)
+    if style_only:
+        # 纯文风快速链路：全程不跑 LLM 摘要与卷映射
+        has_names = bool(cfg.get("names") or cfg.get("aliases"))
+        if has_names:
+            run_step("6 台词归属", "06_build_attrib.py", *cfg_arg, env=env)
+        else:
+            print("\n=== 6 台词归属（已跳过：未配置 names/aliases，交由 07 自动识别说话人） ===", flush=True)
 
-    # 3 汇总 + 校验
-    run_step("3 汇总 + 片尾覆盖率校验", "03_merge_notes.py", *cfg_arg, env=env)
+        run_step("7 文风索引", "07_stylefit_index.py", *cfg_arg, env=env)
+        run_step("8 生成纯文风例子集", "09_build_examples.py", *(cfg_arg + budget_args + style_args), env=env)
+        run_step("9 生成纯文风单文件包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args), env=env)
+    else:
+        # 2 一层摘要
+        if not args.no_llm:
+            run_step("2 一层摘要（并发，一片一个任务）", "02_run_notes.py", *(cfg_arg + par_arg), env=env)
 
-    # 4 卷映射
-    run_step("4 卷映射", "04_build_volume_map.py", *cfg_arg, env=env)
+        # 3 汇总 + 校验
+        run_step("3 汇总 + 片尾覆盖率校验", "03_merge_notes.py", *cfg_arg, env=env)
 
-    # 5 二层卷纪要与元章节
-    if not args.no_llm:
-        run_step("5 二层卷纪要（并发）", "05_run_volumes.py", *(cfg_arg + par_arg), env=env)
-        run_step("5b 元章节（世界观/角色/势力/结局/伏笔）", "05_run_volumes.py", *(["--meta"] + cfg_arg + par_arg), env=env)
+        # 4 卷映射
+        run_step("4 卷映射", "04_build_volume_map.py", *cfg_arg, env=env)
 
-    # 6 台词归属
-    run_step("6 台词归属", "06_build_attrib.py", *cfg_arg, env=env)
+        # 5 二层卷纪要与元章节
+        if not args.no_llm:
+            run_step("5 二层卷纪要（并发）", "05_run_volumes.py", *(cfg_arg + par_arg), env=env)
+            run_step("5b 元章节（世界观/角色/势力/结局/伏笔）", "05_run_volumes.py", *(["--meta"] + cfg_arg + par_arg), env=env)
 
-    # 7 文风索引
-    run_step("7 文风索引", "07_stylefit_index.py", *cfg_arg, env=env)
+        # 6 台词归属
+        run_step("6 台词归属", "06_build_attrib.py", *cfg_arg, env=env)
 
-    # 8 生成例子集
-    run_step("8 生成例子集", "09_build_examples.py", *cfg_arg, env=env)
+        # 7 文风索引
+        run_step("7 文风索引", "07_stylefit_index.py", *cfg_arg, env=env)
 
-    # 9 生成整书总结
-    run_step("9 生成整书总结", "10_build_summary.py", *cfg_arg, env=env)
+        # 8 生成例子集
+        run_step("8 生成例子集", "09_build_examples.py", *(cfg_arg + budget_args + style_args), env=env)
+
+        # 9 生成整书总结
+        run_step("9 生成整书总结", "10_build_summary.py", *(cfg_arg + budget_args), env=env)
+
+        # 10 合并生成参考包
+        run_step("10 合并生成参考包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args), env=env)
 
     # 产物概览
-    out_dir = os.path.join(ROOT, "work", "out")
-    try:
-        sys.path.insert(0, ROOT)
-        from lib import project
-        cfg = project.load(env.get("REFPACK_CONFIG"))
-        out_dir = cfg["paths"]["out"]
-    except SystemExit:
-        pass
+    out_dir = cfg.get("paths", {}).get("out") or os.path.join(ROOT, "work", "out")
     print("\n产物目录：%s" % out_dir)
     if os.path.isdir(out_dir):
         for f in sorted(os.listdir(out_dir)):
             fp = os.path.join(out_dir, f)
-            size = os.path.getsize(fp)
-            print("  - %s (%d bytes)" % (f, size))
+            if not os.path.isfile(fp):
+                continue
+            if f.endswith((".md", ".txt")):
+                txt = textio.read_text(fp)
+                print("  - %s (%.1f KB | ~%s tokens)" % (
+                    f, budget.utf8_kb(txt), format(budget.estimate_tokens(txt), ",")
+                ))
+            else:
+                size = os.path.getsize(fp)
+                print("  - %s (%d bytes)" % (f, size))
     print("\n验收你自己的稿子：python scripts/11_verify.py --text <你的稿子.txt>")
 
 

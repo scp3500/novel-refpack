@@ -4,9 +4,11 @@
 
   python scripts/09_build_examples.py
   python scripts/09_build_examples.py --out out/例子.txt
+  python scripts/09_build_examples.py --preset compact
+  python scripts/09_build_examples.py --style-only --anonymize --kb 60
 
-内容全部来自语料与索引，不自由发挥：叙述腔样本、内心独白、对白回合、
-台词分角色 + 语音档案、亲密写法、名场面、描写套路、语音分期、搭配表·雷区、用词表。
+内容全部来自语料与索引，不自由发挥：叙述腔样本、内心独白、细粒度笔法与镜头细节、
+对白回合、台词分角色/语体、亲密写法、名场面、描写套路、语音分期、搭配表·雷区、用词表。
 
 「使用禁令」一节从 config/bans.md 读（没有就留占位符），
 它专门拦模型最容易犯的错：照抄开篇特殊写法、写本书没有的设定、把分期角色写死。
@@ -19,15 +21,77 @@ from collections import defaultdict, Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from lib import project, textio, corpus as C      # noqa: E402
+from lib import project, textio, corpus as C, budget      # noqa: E402
+
+
+def _head4(s):
+    return re.sub(r"\s", "", s)[:4]
+
+
+def _head8(s):
+    return re.sub(r"[^\u4e00-\u9fff]", "", s)[:8]
+
+
+def stride_pick(items, k):
+    """按全书均匀采样 k 条（避免只取开头）。"""
+    if k <= 0:
+        return []
+    n = len(items)
+    if n <= k:
+        return list(items)
+    return [items[int(i * n / k)] for i in range(k)]
+
+
+def dedup_stride_pick(items, k, head_n=4):
+    """全书均匀步长采样，并过滤句首前 head_n 字重复项。"""
+    if k <= 0 or not items:
+        return []
+    seen_full, seen_head, uniq = set(), set(), []
+    for it in items:
+        s = it.strip()
+        if not s:
+            continue
+        h = re.sub(r"\s", "", s)[:head_n]
+        if s in seen_full or (h and h in seen_head):
+            continue
+        seen_full.add(s)
+        if h:
+            seen_head.add(h)
+        uniq.append(s)
+    return stride_pick(uniq, k)
 
 
 def quantile_len(items, k=8):
     v = sorted(items, key=len)
-    if not v:
+    if not v or k <= 0:
         return []
     n = len(v)
-    return list(dict.fromkeys(v[min(n - 1, int(n * i / k))] for i in range(1, k)))
+    picked = [v[min(n - 1, int(n * i / k))] for i in range(1, k + 1)]
+    out, seen_full, seen_head = [], set(), set()
+    for s in picked:
+        h = _head4(s)
+        if s in seen_full or (h and h in seen_head):
+            continue
+        seen_full.add(s)
+        if h:
+            seen_head.add(h)
+        out.append(s)
+    return out
+
+
+def pick_narr_tier(items, k):
+    """长度分级 + 全书均匀步长 + 句首去重，拒绝重复句式。"""
+    if k <= 0 or not items:
+        return []
+    v = sorted(items, key=len)
+    # 先按长度均衡取候选，再在原序里均匀步长采样并去重，兼顾长度跨度与全书覆盖
+    if len(v) > k * 4:
+        # 从原文序列中均匀取 4k 个，再按句首去重后 stride_pick k 个
+        pool = stride_pick(items, k * 4)
+        res = dedup_stride_pick(pool, k, head_n=4)
+        if len(res) >= k:
+            return res[:k]
+    return dedup_stride_pick(items, k, head_n=4)
 
 
 def load_index(cfg):
@@ -87,10 +151,7 @@ def address_table(pairs, names, top=16):
 
 
 def stage_table(pairs, periods=3, top=30):
-    """语音分期：同一角色的台词按出现顺序均分成 N 期，看条数与均长怎么变。
-
-    出现顺序 ≈ 剧情顺序（归属是从头到尾扫原文抓的）。
-    """
+    """语音分期：同一角色的台词按出现顺序均分成 N 期，看条数与均长怎么变。"""
     bywho = defaultdict(list)
     for w, t in pairs:
         bywho[w].append(t)
@@ -132,25 +193,30 @@ def scene_cards(cfg, k=3):
     return out
 
 
-def stride_pick(items, k):
-    """按全书均匀采样 k 条（避免只取开头）。"""
-    n = len(items)
-    if n <= k:
-        return list(items)
-    return [items[int(i * n / k)] for i in range(k)]
-
-
 TOPICS = [
-    ("A · 登陆空间 / 剧本与游戏机制",
-     r"(登陆空间|剧本|副本|结算|评分|通关|队伍|队长|系统提示|物品栏|装备栏|菜单|商城|称号|声望|灵力值|经验值)"),
+    ("A · 系统 / 机制与规则",
+     r"(系统提示|物品栏|装备栏|菜单|商城|称号|属性|经验值|等级|副本|结算|评分|通关|队伍|队长)"),
     ("B · 战斗、技能与受伤",
-     r"(技能|灵力|称号|伤害|秒杀|闪避|格挡|斩|拳|开火|爆炸|伤口|鲜血|倒地)"),
+     r"(技能|伤害|秒杀|闪避|格挡|斩|拳|开火|爆炸|伤口|鲜血|倒地|挥剑|突刺)"),
     ("C · 推理、赌局与算计",
      r"(推理|线索|证据|嫌疑|凶手|赌局|概率|筹码|下注|赔率|算计|条件|交易)"),
-    ("D · 恐惧惊悚与副本氛围",
+    ("D · 恐惧惊悚与氛围",
      r"(恐怖|诡异|阴森|血腥|尖叫|黑暗|阴冷|毛骨悚然|惨白|尸体|死寂)"),
     ("E · 搞笑吐槽与日常",
-     r"(吐槽|坑爹|无语|白眼|中二|干笑|什么鬼|开什么玩笑|吃了|喝了)"),
+     r"(吐槽|坑爹|无语|白眼|干笑|什么鬼|开什么玩笑|吃了|喝了)"),
+]
+
+STYLE_ONLY_TOPICS = [
+    ("A · 动作交锋与冲突",
+     r"(挥剑|格挡|闪避|突刺|挥拳|拔剑|反手|后退|撞上|扑来|伤口|鲜血|倒地|兵器)"),
+    ("B · 环境氛围与悬疑张力",
+     r"(黑暗|阴影|夜色|月光|寂静|死寂|阴冷|风声|脚步声|压迫感|屏住呼吸|微弱的光)"),
+    ("C · 博弈推理与交涉",
+     r"(推理|线索|证据|破绽|判断|试探|筹码|条件|底牌|交易|沉默片刻|反问|算计)"),
+    ("D · 日常互动与轻松吐槽",
+     r"(吐槽|无语|翻了个白眼|干笑|苦笑|顺口|叹了口气|早饭|喝了一口|开什么玩笑)"),
+    ("E · 情绪起伏与内心转折",
+     r"(犹豫|迟疑|定了定神|皱起眉|心里一沉|松了口气|心跳|发紧|沉默|苦涩|自嘲)"),
 ]
 
 
@@ -177,7 +243,9 @@ def arc_base(t):
     return re.split(r"[（(【]", t)[0].strip()
 
 
-def load_topics(cfg):
+def load_topics(cfg, style_only=False):
+    if style_only:
+        return STYLE_ONLY_TOPICS
     p = os.path.join(ROOT, "config", "stylefit", "topics.json")
     if os.path.isfile(p):
         d = textio.read_json(p, {}) or {}
@@ -230,7 +298,6 @@ def arc_digests(cfg, min_ch=3, win=2):
             total_chars += max(0, end - start)
             segs_body.append([p.strip() for p in C.paragraphs(raw[start:end])])
         per = 5 if ch >= 20 else (4 if ch >= 8 else 3)
-        # 在各连续段内部采样，防止跨段滑窗越界到无关章节
         cand_passages = []
         for body in segs_body:
             for n, p in enumerate(body):
@@ -253,13 +320,226 @@ def arc_digests(cfg, min_ch=3, win=2):
     return out
 
 
+def extract_craft_details(paras, raw_text, per_cat=12):
+    """当旧 index.json 没有「笔法细节」字段时，在内存里从 paras 实时提取 5 类细节。"""
+    has_quote_re = re.compile("[" + "".join(re.escape(c) for c in C.QUOTE_OPEN + C.QUOTE_CLOSE) + "]")
+    action_words_re = re.compile(
+        r"(?:伸手|伸出|拿|拉|推|走|看|转身|低头|抬起|放下|握|按|推开|坐下|起身|站起|迈步|扣|抓|递|接过|抬眼|抬手|点头|摇头)"
+    )
+    sensory_re = re.compile(
+        r"(?:阳光|月光|灯光|阴影|夜色|光线|昏暗|微风|风声|雨声|脚步声|敲门声|响起|传来|冰凉|滚烫|温热|粗糙|刺骨|窗外|街上|角落|空气|气味|寂静|回荡)"
+    )
+    transition_re = re.compile(
+        r"^(?:片刻之后|没过多久|很快|过了许久|半晌|第二天|次日|夜幕降临|天色渐暗|黄昏|清晨|傍晚|半小时后|等到|回到|离开|走进|来到)"
+        r"|(?:片刻之后|没过多久|第二天|夜幕降临|半小时后|等到.{2,10}的时候)"
+    )
+
+    chapter_first_paras = set()
+    expect_first = False
+    for ln in (raw_text or "").split("\n"):
+        st = ln.strip()
+        if not st:
+            continue
+        if st.startswith("#") or C.CHAP.match(st):
+            expect_first = True
+            continue
+        if re.fullmatch(r"[-—=*~·\s　]{3,}", st):
+            continue
+        if expect_first:
+            chapter_first_paras.add(st)
+            expect_first = False
+
+    craft_action, craft_sensory, craft_trans, craft_dlg_act, craft_short = [], [], [], [], []
+    for p in paras:
+        plen = len(p)
+        has_q = bool(has_quote_re.search(p))
+        if not has_q:
+            comma_cnt = p.count("，")
+            if 35 <= plen <= 140 and 2 <= comma_cnt <= 4 and len(action_words_re.findall(p)) >= 2:
+                craft_action.append(p)
+            if 30 <= plen <= 140 and sensory_re.search(p):
+                craft_sensory.append(p)
+            if 20 <= plen <= 110 and (transition_re.search(p) or p in chapter_first_paras):
+                craft_trans.append(p)
+            if 8 <= plen <= 28:
+                craft_short.append(p)
+        else:
+            if 40 <= plen <= 160 and C.QUOTE.search(p):
+                narr_rest = re.sub(r"\s", "", C.QUOTE.sub("", p))
+                if len(narr_rest) >= 14:
+                    craft_dlg_act.append(p)
+
+    return {
+        "连续动作白描": dedup_stride_pick(craft_action, per_cat, head_n=8),
+        "环境与五感描写": dedup_stride_pick(craft_sensory, per_cat, head_n=8),
+        "开篇与转场句": dedup_stride_pick(craft_trans, per_cat, head_n=8),
+        "对话穿插动作（神态锚点）": dedup_stride_pick(craft_dlg_act, per_cat, head_n=8),
+        "克制收尾与留白短段": dedup_stride_pick(craft_short, per_cat, head_n=8),
+    }
+
+
+DIALOGUE_FUNC_BUCKETS = [
+    ("命令禁止", r"^(别|不要|不许|给我|把.{0,6}(放下|拿来|还)|少|快滚|闭嘴|住手)"),
+    ("让步接受", r"^(嗯|好|行|那好|好吧|那就|可以|知道了|随便|算了)"),
+    ("否认辩解", r"(不是你想|才不|没有|我那是|不是[^，。]{0,6}是|听我解释|误会)"),
+    ("反问逼问", r"[？?]\s*$|难道|不是.{0,8}吗|凭什么|为什么"),
+    ("请求商量", r"(让我|能不能|可不可以|好吗|好不好|帮我|借我|陪我)"),
+    ("抱怨吐槽", r"(烦|真是|又来了|搞什么|凭什么|可恶|偏偏|未免)"),
+    ("慌乱结巴", r"(、|……).{0,3}(我|你)|我我|你你|不、|别、"),
+    ("陈述说明", r"."),
+]
+
+
+def _classify_dialogue_func(line):
+    for name, pat in DIALOGUE_FUNC_BUCKETS:
+        if re.search(pat, line):
+            return name
+    return "陈述说明"
+
+
+def build_dialogue_style_buckets(X, pairs, per_bucket=10):
+    """纯文风模式：去角色绑定，按台词功能桶汇总全书代表句式、句长与句尾语气词。"""
+    buckets = defaultdict(list)
+    # 优先从 pairs 全量归类以保留真实分布与句尾统计；pairs 为空时从 X["台词"] 回收样本
+    if pairs:
+        for _, txt in pairs:
+            t = (txt or "").strip()
+            if len(re.sub(r"\s", "", t)) >= 2:
+                buckets[_classify_dialogue_func(t)].append(t)
+    else:
+        for who_map in (X.get("台词") or {}).values():
+            for func, info in (who_map or {}).items():
+                target = func if func in {k for k, _ in DIALOGUE_FUNC_BUCKETS} else "陈述说明"
+                for s in (info.get("样本") or []):
+                    buckets[target].append(s)
+
+    out = []
+    for func, _ in DIALOGUE_FUNC_BUCKETS:
+        ls = buckets.get(func) or []
+        if not ls:
+            continue
+        lens = sorted(len(x) for x in ls)
+        avg_len = round(sum(lens) / len(lens), 1)
+        med_len = lens[len(lens) // 2]
+        tail = Counter()
+        for t in ls:
+            s = re.sub(r"[。！？…~\s]+$", "", t)
+            if s:
+                for ch in (s[-1:], s[-2:]):
+                    if re.search(r"[\u4e00-\u9fff]", ch):
+                        tail[ch] += 1
+        top_tails = [w for w, c in tail.most_common(12) if c >= 2][:6]
+        samples = pick_narr_tier(ls, per_bucket)
+        out.append({
+            "func": func,
+            "n": len(ls),
+            "avg_len": avg_len,
+            "med_len": med_len,
+            "tails": top_tails,
+            "samples": samples,
+        })
+    return out
+
+
+def _compose_document(header_lines, sections):
+    parts = list(header_lines)
+    for hdr, body, _w, _kt in sections:
+        parts.append(hdr)
+        parts.append("")
+        if body:
+            parts.append(body.rstrip())
+            parts.append("")
+    return "\n".join(parts).strip() + "\n"
+
+
+def _budget_trim_sections(header_lines, sections, binfo):
+    """按权重分配字符配额并优雅裁剪；若 UTF-8 KB 仍超出目标 8% 以上则等比下调再裁一次。"""
+    if binfo.get("unlimited") or not binfo.get("example_chars"):
+        return _compose_document(header_lines, sections)
+
+    header_len = sum(len(x) + 1 for x in header_lines)
+    sec_raw_texts = []
+    weights = []
+    keep_tails = []
+    for hdr, body, w, kt in sections:
+        block = (hdr + "\n\n" + (body.rstrip() if body else "")).strip() + "\n"
+        sec_raw_texts.append(block)
+        weights.append(w)
+        keep_tails.append(kt)
+
+    total_chars = header_len + sum(len(t) for t in sec_raw_texts)
+    ex_chars = binfo["example_chars"]
+    if total_chars <= ex_chars:
+        doc = _compose_document(header_lines, sections)
+        ex_kb = binfo.get("example_kb")
+        if not ex_kb or budget.utf8_kb(doc) <= ex_kb * 1.08:
+            return doc
+
+    def _run_allot(char_limit):
+        avail = max(400, char_limit - header_len - len(sections) * 2)
+        sizes = [len(t) for t in sec_raw_texts]
+        alloc = budget.allot_weights(sizes, weights, avail)
+        trimmed_secs = []
+        for idx, (hdr, body, w, kt) in enumerate(sections):
+            block = sec_raw_texts[idx]
+            lim = alloc[idx]
+            if len(block) > lim:
+                tblock = budget.trim_markdown_block(block, lim, keep_tail=kt)
+                # 拆回 hdr 与 body
+                lines = tblock.split("\n", 1)
+                nhdr = lines[0] if lines else hdr
+                nbody = lines[1].lstrip("\n") if len(lines) > 1 else ""
+                trimmed_secs.append((nhdr, nbody, w, kt))
+            else:
+                trimmed_secs.append((hdr, body, w, kt))
+        return _compose_document(header_lines, trimmed_secs)
+
+    doc = _run_allot(ex_chars)
+    ex_kb = binfo.get("example_kb")
+    if ex_kb and budget.utf8_kb(doc) > ex_kb * 1.08:
+        actual_kb = budget.utf8_kb(doc)
+        scale_down = (ex_kb / actual_kb) * 0.96
+        doc = _run_allot(max(600, int(ex_chars * scale_down)))
+    if ex_kb and budget.utf8_kb(doc) > ex_kb * 1.12:
+        doc = budget.trim_to_utf8_bytes(doc, ex_kb)
+    return doc
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--style-only", action="store_true", default=None,
+                    help="纯文风蒸馏模式：剥离原书剧情、名场面、分期与人物绑定")
+    ap.add_argument("--anonymize", action="store_true",
+                    help="对摘录中的人名与【条目框】做中性代称脱敏")
+    ap.add_argument("--no-anonymize", action="store_true",
+                    help="强制关闭脱敏（即使在 --style-only 下）")
+    budget.add_budget_args(ap)
     a = ap.parse_args()
 
     cfg = project.load(a.config)
+    style_only = bool(cfg.get("style_only")) if a.style_only is None else bool(a.style_only)
+    if a.no_anonymize:
+        anonymize = False
+    elif a.anonymize or cfg.get("anonymize") or style_only:
+        anonymize = True
+    else:
+        anonymize = False
+
+    binfo = budget.resolve_budget(
+        cfg,
+        preset=a.preset,
+        kb=a.kb,
+        max_tokens=a.max_tokens,
+        ratio=a.ratio,
+        style_only=style_only,
+    )
+    if binfo["unlimited"]:
+        scale = 2.5
+    else:
+        scale = max(0.45, min(2.6, (binfo["example_kb"] or 105.0) / 105.0))
+
     X = load_index(cfg)
     pairs = read_pairs(cfg)
     names = cfg.get("names") or []
@@ -267,234 +547,331 @@ def main():
     paras = C.paragraphs(raw)
     narr = C.narr_sentences(paras)
 
-    L = []
-    P = L.append
-    P("# %s · 典型例子集" % (cfg.get("name") or ""))
-    P("（文风语料 ｜ 全部摘自原文 ｜ 供仿写与提示词取用）")
-    P("")
-    P("配套：`整书总结.md`（设定/剧情/状态/IF）。本文只负责文风与语感。")
-    P("阅读顺序建议：先扇【一 文风速览】定口径，写对白查【五 台词分角色】【四 对白回合】，")
-    P("写动作翻【八 描写套路】【十三 专项摘录】，写特定剧本查【十四 分剧本语料】，收尾前用【十五 使用禁令】自检。")
-    P("")
-    P("=" * 60)
+    if anonymize:
+        extra_speakers = list((X.get("台词") or {}).keys())
+        clean_fn, role_map = C.build_anonymizer(
+            names=names,
+            aliases=cfg.get("aliases"),
+            extra_terms=extra_speakers,
+            strip_brackets=True,
+        )
+    else:
+        clean_fn, role_map = (lambda s: s), {}
+
+    # ── 组装各节 (header, body, weight, keep_tail) ──
+    sections = []
+
+    def add_sec(header, lines_list, weight, keep_tail=False):
+        body = "\n".join(lines_list).strip()
+        sections.append((header, body, weight, keep_tail))
 
     # ── 一 文风速览 ──
     st = X.get("统计", {})
-    P("## 一 · 文风速览（统计靶）")
-    P("")
-    P("- 语料规模：%s" % (X.get("meta", {}).get("chars", "?")))
-    P("- 台词均长：%s ｜ 中位：%s ｜ ≤19 字占比：%s" % (
-        st.get("台词均长"), st.get("台词中位长度"), st.get("台词≤19字占比")))
-    P("- 每千字标点：%s" % st.get("每千字标点"))
-    P("- 台词量前 12 人：%s" % st.get("说话人台词量"))
-    P("- 叙述句数：%s" % st.get("叙述句数"))
-    P("")
-    P("> 对标时必须按同类场景切区间，不能拿全书硬套（详见 docs/PITFALLS.md）。")
-    P("")
+    s1 = [
+        "- 语料规模：%s" % (X.get("meta", {}).get("chars", "?")),
+        "- 台词均长：%s ｜ 中位：%s ｜ ≤19 字占比：%s" % (
+            st.get("台词均长"), st.get("台词中位长度"), st.get("台词≤19字占比")),
+        "- 每千字标点：%s" % st.get("每千字标点"),
+        "- 叙述句数：%s" % st.get("叙述句数"),
+    ]
+    if not style_only:
+        s1.append("- 台词量前 12 人：%s" % st.get("说话人台词量"))
+    if anonymize and role_map:
+        s1.append("- 脱敏说明：摘录中的原书人名已统一映射为中性代称（某甲/某乙……），【条目框】已替换为「某技能/条目」。")
+    s1.append("")
+    s1.append("> 对标时必须按同类场景切区间，不能拿全书硬套（详见 docs/PITFALLS.md）。")
+    add_sec("## 一 · 文风速览（统计靶）", s1, 3.0)
 
     # ── 二 叙述腔 ──
-    P("## 二 · 叙述腔（%s）" % ("第一人称" if cfg.get("person") == "first" else "第三人称"))
-    P("")
-    short = [s for s in narr if len(s) <= 22]
-    mid = [s for s in narr if 22 < len(s) <= 50]
-    long = [s for s in narr if len(s) > 50]
-    for tag, pool in (("超短句", [s for s in narr if len(s) <= 12]),
-                      ("短句", short), ("中句", mid), ("长句", long)):
-        P("**%s**" % tag)
-        for s in quantile_len(pool, 10):
-            P("- %s" % s)
-        P("")
+    narr_k = max(8, min(50, int(round(20 * scale))))
+    s2 = []
+    tiers = [
+        ("超短句(≤12字)", [s for s in narr if len(s) <= 12]),
+        ("短句(13-25字)", [s for s in narr if 12 < len(s) <= 25]),
+        ("中句(26-50字)", [s for s in narr if 25 < len(s) <= 50]),
+        ("长复合句(>50字)", [s for s in narr if len(s) > 50]),
+    ]
+    for tag, pool in tiers:
+        s2.append("**%s**" % tag)
+        for s in pick_narr_tier(pool, narr_k):
+            s2.append("- %s" % clean_fn(s))
+        s2.append("")
+    add_sec("## 二 · 叙述腔（%s）" % ("第一人称" if cfg.get("person") == "first" else "第三人称"), s2, 3.0)
 
     # ── 三 内心独白 ──
-    P("## 三 · 内心独白 / 吐槽（混在叙述里，不带引号的那种）")
-    P("")
+    inner_k = max(8, int(round(24 * scale)))
+    one_k = max(12, int(round(36 * scale)))
     inner = [s for s in narr if re.search(r"(心想|心里想|觉得|暗自|不禁|寻思|盘算|默念|吐槽)", s)]
-    for s in quantile_len(inner, 20):
-        P("- %s" % s)
-    P("")
-    P("**单句成段短句（原文里独立一行，带吐槽 / 自嘲味）：**")
-    P("")
     one = [p.strip() for p in paras if 4 <= len(p.strip()) <= 26 and not C.QUOTE.search(p)]
-    for s in stride_pick(one, 36):
-        P("- %s" % s)
-    P("")
+    s3 = []
+    for s in dedup_stride_pick(inner, inner_k, head_n=4):
+        s3.append("- %s" % clean_fn(s))
+    s3.append("")
+    s3.append("**单句成段短句（原文里独立一行，带吐槽 / 自嘲味）：**")
+    s3.append("")
+    for s in dedup_stride_pick(one, one_k, head_n=4):
+        s3.append("- %s" % clean_fn(s))
+    add_sec("## 三 · 内心独白 / 吐槽（混在叙述里，不带引号的那种）", s3, 2.2)
+
+    # ── 三B 细粒度笔法与镜头细节 ──
+    craft_k = max(5, int(round(12 * scale)))
+    craft_data = X.get("笔法细节") or extract_craft_details(paras, raw, per_cat=craft_k)
+    craft_order = [
+        "连续动作白描",
+        "环境与五感描写",
+        "对话穿插动作（神态锚点）",
+        "开篇与转场句",
+        "克制收尾与留白短段",
+    ]
+    s_craft = [
+        "> 写动作戏、环境氛围与转场衔接前先读这一节：全部来自原文真实句段，展示句子如何落地。",
+        "",
+    ]
+    for cat in craft_order:
+        items = craft_data.get(cat) or []
+        if not items:
+            continue
+        s_craft.append("### %s" % cat)
+        for item in dedup_stride_pick(items, craft_k, head_n=8):
+            s_craft.append("- %s" % clean_fn(item))
+        s_craft.append("")
+    add_sec("## 四 · 细粒度笔法与镜头细节（连续动作 / 五感环境 / 神态锚点 / 转场留白）", s_craft, 4.0)
 
     # ── 四 对白回合 ──
-    P("## 四 · 对白回合片段（引号与叙述的呼吸节奏）")
-    P("")
+    dlg_per = max(3, int(round(6 * scale)))
+    s4 = []
     for sc, d in (X.get("场景") or {}).items():
-        P("### 场景：%s" % sc)
-        for s in d.get("样本", [])[:4]:
-            P("```")
-            P(s.strip())
-            P("```")
-        P("")
+        if style_only and sc in ("游戏面板", "死亡复活"):
+            continue
+        s4.append("### 场景：%s" % sc)
+        for s in stride_pick(d.get("样本", []), dlg_per):
+            s4.append("```")
+            s4.append(clean_fn(s.strip()))
+            s4.append("```")
+        s4.append("")
+    add_sec("## 五 · 对白回合片段（引号与叙述的呼吸节奏）", s4, 3.5)
 
-    # ── 五 台词分角色 + 语音档案 ──
-    P("## 五 · 台词分角色 + 语音档案")
-    P("")
-    masks = voice_profiles(pairs)
-    addrs = address_table(pairs, names)
-    for who, d in masks.items():
-        P("### %s" % who)
-        P("- 台词 %d 条 ｜ 均长 %.1f ｜ 问号率 %.0f%% ｜ 感叹率 %.0f%% ｜ 省略率 %.0f%%" % (
-            d["n"], d["均长"], d["问号率"] * 100, d["感叹率"] * 100, d["省略率"] * 100))
-        if d["自称"]:
-            P("- 自称：%s" % " ｜ ".join("%s %d" % x for x in d["自称"]))
-        if addrs.get(who):
-            P("- 谁常提他：%s" % " ｜ ".join("%s %d" % x for x in addrs[who]))
-        if d["口癖"]:
-            P("- 句尾口癖：%s" % " ｜ ".join("%s %d" % x for x in d["口癖"]))
-        bs = (X.get("台词") or {}).get(who) or {}
-        for func, b in list(bs.items())[:8]:
-            P("- **%s**（%d 条，中位 %d 字）" % (func, b["n"], b["中位长度"]))
-            for s in b["样本"][:8]:
-                P("  - %s" % s)
-        P("")
+    # ── 五 台词档案 / 语体 ──
+    masks = {}
+    if style_only:
+        bucket_per = max(5, int(round(10 * scale)))
+        s5 = [
+            "> 已开启纯文风模式：剥离原书人物绑定，按话语功能汇总全书对白句式、节奏与高频句尾语气词。",
+            "",
+        ]
+        for binfo_row in build_dialogue_style_buckets(X, pairs, per_bucket=bucket_per):
+            tail_str = " ｜ ".join(binfo_row["tails"]) if binfo_row["tails"] else "—"
+            s5.append("### %s（%d 条 ｜ 均长 %.1f 字 ｜ 中位 %d 字 ｜ 高频句尾：%s）" % (
+                binfo_row["func"], binfo_row["n"], binfo_row["avg_len"], binfo_row["med_len"], tail_str))
+            for s in binfo_row["samples"]:
+                s5.append("- %s" % clean_fn(s))
+            s5.append("")
+        add_sec("## 六 · 语体与台词功能范例（去角色绑定）", s5, 3.0)
+    else:
+        masks = voice_profiles(pairs)
+        addrs = address_table(pairs, names)
+        sample_per_func = max(4, int(round(8 * scale)))
+        s5 = []
+        for who, d in masks.items():
+            s5.append("### %s" % clean_fn(who))
+            s5.append("- 台词 %d 条 ｜ 均长 %.1f ｜ 问号率 %.0f%% ｜ 感叹率 %.0f%% ｜ 省略率 %.0f%%" % (
+                d["n"], d["均长"], d["问号率"] * 100, d["感叹率"] * 100, d["省略率"] * 100))
+            if d["自称"]:
+                s5.append("- 自称：%s" % " ｜ ".join("%s %d" % x for x in d["自称"]))
+            if addrs.get(who):
+                s5.append("- 谁常提他：%s" % " ｜ ".join("%s %d" % (clean_fn(k), v) for k, v in addrs[who]))
+            if d["口癖"]:
+                s5.append("- 句尾口癖：%s" % " ｜ ".join("%s %d" % x for x in d["口癖"]))
+            bs = (X.get("台词") or {}).get(who) or {}
+            for func, b in list(bs.items())[:8]:
+                s5.append("- **%s**（%d 条，中位 %d 字）" % (func, b["n"], b["中位长度"]))
+                for s in b["样本"][:sample_per_func]:
+                    s5.append("  - %s" % clean_fn(s))
+            s5.append("")
+        add_sec("## 六 · 台词分角色 + 语音档案", s5, 3.0)
 
     # ── 六 亲密 / 感情场景写法 ──
-    P("## 六 · 亲密与感情场景写法")
-    P("")
+    s6 = []
     d = (X.get("场景") or {}).get("亲密")
     if d:
-        P("原文片段（%d 段）：" % d["n"])
-        for s in d.get("样本", [])[:4]:
-            P("```")
-            P(s.strip())
-            P("```")
-    P("")
-    P("场景词典（这类场景书里实际用的词 · 次数）：")
+        s6.append("原文片段（%d 段）：" % d["n"])
+        for s in stride_pick(d.get("样本", []), max(2, int(round(4 * scale)))):
+            s6.append("```")
+            s6.append(clean_fn(s.strip()))
+            s6.append("```")
+        s6.append("")
+    s6.append("场景词典（这类场景书里实际用的词 · 次数）：")
     for k, dd in (X.get("场景词典") or {}).items():
+        if style_only and k in ("游戏面板", "死亡复活"):
+            continue
         hot = sorted([(w, n) for w, n in dd.items() if n > 0], key=lambda x: -x[1])[:12]
         dead = [w for w, n in dd.items() if n == 0]
-        P("- **%s**：%s" % (k, " ｜ ".join("%s %d" % x for x in hot)))
+        s6.append("- **%s**：%s" % (k, " ｜ ".join("%s %d" % x for x in hot)))
         if dead:
-            P("  - 禁用：%s" % "、".join(dead))
-    P("")
+            s6.append("  - 禁用：%s" % "、".join(dead))
+    add_sec("## 七 · 亲密与感情场景写法", s6, 1.8)
 
-    # ── 七 名场面 ──
-    P("## 七 · 名场面原文摘录")
-    P("")
-    for fn, qs in scene_cards(cfg):
-        P("### %s" % fn)
-        for q in qs:
-            P("- “%s”" % q)
-        P("")
-    if not scene_cards(cfg):
-        P("<!-- notes/vol/*.md 里没有「名场面与关键台词」小节，检查二层模板 -->")
-        P("")
+    # ── 七 名场面（仅同人/IF 模式）──
+    if not style_only:
+        cards = scene_cards(cfg)
+        s7 = []
+        for fn, qs in cards:
+            s7.append("### %s" % fn)
+            for q in qs:
+                s7.append("- “%s”" % clean_fn(q))
+            s7.append("")
+        if not cards:
+            s7.append("<!-- notes/vol/*.md 里没有「名场面与关键台词」小节，检查二层模板 -->")
+        add_sec("## 八 · 名场面原文摘录", s7, 1.0)
 
     # ── 八 描写套路 ──
-    P("## 八 · 描写套路（这个意图书里怎么写）")
-    P("")
+    intent_k = max(5, int(round(10 * scale)))
+    s8 = []
     for name, d in (X.get("描写") or {}).items():
-        P("### %s（原书 %d 处）" % (name, d["n"]))
-        for s in d.get("样本", []):
-            P("- %s" % s)
-        P("")
+        if style_only and name in ("看面板",):
+            continue
+        s8.append("### %s（原书 %d 处）" % (name, d["n"]))
+        for s in dedup_stride_pick(d.get("样本", []), intent_k, head_n=6):
+            s8.append("- %s" % clean_fn(s))
+        s8.append("")
+    add_sec("## 九 · 描写套路（这个意图书里怎么写）", s8, 3.5)
 
-    # ── 九 语音分期 ──
-    P("## 九 · 语音分期（角色说话随时间/年龄变化）")
-    P("")
-    tab = stage_table(pairs)
-    if tab:
-        P("| 角色 | 前期 | 中期 | 后期 |")
-        P("|---|---|---|---|")
-        for who, parts in tab.items():
-            P("| %s | %s |" % (who, " | ".join(parts)))
-    else:
-        P("<!-- 没算出分期数据。若本书有角色说话方式随剧情变化（结巴→流利、幼年→成年），"
-          "在这里手工列出来，并标明分界章节。 -->")
-    P("")
+    # ── 九 语音分期（仅同人/IF 模式）──
+    if not style_only:
+        s9 = []
+        tab = stage_table(pairs)
+        if tab:
+            s9.append("| 角色 | 前期 | 中期 | 后期 |")
+            s9.append("|---|---|---|---|")
+            for who, parts in tab.items():
+                s9.append("| %s | %s |" % (clean_fn(who), " | ".join(parts)))
+        else:
+            s9.append("<!-- 没算出分期数据。若本书有角色说话方式随剧情变化（结巴→流利、幼年→成年），"
+                      "在这里手工列出来，并标明分界章节。 -->")
+        add_sec("## 十 · 语音分期（角色说话随时间/年龄变化）", s9, 1.2)
 
-    # ── 十 搭配表 · 雷区 ──
-    P("## 十 · 搭配表 · 典型 vs 雷区")
-    P("")
-    P("> 写手很少造词，但经常配错。下表左列是概念，右列是书里实际的配法及次数，")
-    P("> 标「禁用」的是全书 0 次——出现就是 AI 味。")
-    P("")
+    # ── 十 搭配表 · 雷区（保持原词不脱敏）──
+    s10 = [
+        "> 写手很少造词，但经常配错。下表左列是概念，右列是书里实际的配法及次数，",
+        "> 标「禁用」的是全书 0 次——出现就是 AI 味。",
+        "",
+    ]
     for c, dd in (X.get("搭配") or {}).items():
-        P("### %s" % c)
+        s10.append("### %s" % c)
         for w, n in sorted(dd.items(), key=lambda kv: -kv[1]):
             mark = "  【禁用】" if n == 0 else ("  【慎用】" if n <= 3 else "")
-            P("- %s  %d%s" % (w, n, mark))
-        P("")
+            s10.append("- %s  %d%s" % (w, n, mark))
+        s10.append("")
     z = X.get("零频词") or []
-    P("### 零频黑名单（全书 0 次）")
-    P("")
-    P("、".join(z) if z else "（空）")
-    P("")
+    s10.append("### 零频黑名单（全书 0 次）")
+    s10.append("")
+    s10.append("、".join(z) if z else "（空）")
+    add_sec("## 十一 · 搭配表 · 典型 vs 雷区", s10, 2.8, keep_tail=True)
 
     # ── 十一 用词表 ──
-    P("## 十一 · 用词表与场景高频词")
-    P("")
+    s11 = []
     for c, dd in (X.get("用词") or {}).items():
-        P("- **%s**：%s" % (c, " ｜ ".join(
+        s11.append("- **%s**：%s" % (c, " ｜ ".join(
             "%s %d%s" % (w, n, "【禁用】" if n == 0 else "") for w, n in dd.items())))
-    P("")
+    add_sec("## 十二 · 用词表与场景高频词", s11, 1.8)
 
-    # ── 十二 章节标题样例 ──
-    P("## 十二 · 章节标题样例（写番外 / IF 时沿用这套句式）")
-    P("")
-    secs = textio.read_json(os.path.join(cfg["paths"]["raw"], "sections.json"), []) or []
-    all_t = [s.get("title") for s in secs if s.get("title")]
-    named = [t for t in all_t if re.match(r"^第[0-9０-９零〇一二三四五六七八九十百千两]+[章节回话卷]\s+\S", t)]
-    P("（全书 %d 章，其中 %d 章原文就没给标题、只写「第 N 章」，此处只列有标题的 %d 个；"
-      "写番外时不要给这些无名章补造标题。）" % (
-          len(all_t), len(all_t) - len(named), len(named)))
-    P("")
-    for t in stride_pick(named, 60):
-        P("- %s" % t)
-    P("")
+    # ── 十二 章节标题样例（仅同人/IF 模式）──
+    if not style_only:
+        secs = textio.read_json(os.path.join(cfg["paths"]["raw"], "sections.json"), []) or []
+        all_t = [s.get("title") for s in secs if s.get("title")]
+        named = [t for t in all_t if re.match(r"^第[0-9０-９零〇一二三四五六七八九十百千两]+[章节回话卷]\s+\S", t)]
+        s12 = [
+            "（全书 %d 章，其中 %d 章原文就没给标题、只写「第 N 章」，此处只列有标题的 %d 个；"
+            "写番外时不要给这些无名章补造标题。）" % (len(all_t), len(all_t) - len(named), len(named)),
+            "",
+        ]
+        for t in stride_pick(named, max(15, min(60, int(round(36 * scale))))):
+            s12.append("- %s" % clean_fn(t))
+        add_sec("## 十三 · 章节标题样例（写番外 / IF 时沿用这套句式）", s12, 0.5)
 
     # ── 十三 专项摘录 ──
-    P("## 十三 · 专项摘录（按主题的大段原文，写同类场景前先扫一遍）")
-    P("")
-    for title, segs in topic_digests(paras, topics=load_topics(cfg)):
-        P("### %s" % title)
-        P("")
+    topic_per = max(4, int(round(8 * scale)))
+    s13 = []
+    for title, segs in topic_digests(paras, topics=load_topics(cfg, style_only=style_only), per=topic_per):
+        s13.append("### %s" % title)
+        s13.append("")
         for s in segs:
-            P("```")
-            P(s)
-            P("```")
-        P("")
+            s13.append("```")
+            s13.append(clean_fn(s))
+            s13.append("```")
+        s13.append("")
+    add_sec("## 十四 · 专项摘录（按主题的大段原文，写同类场景前先扫一遍）", s13, 1.8)
 
-    # ── 十四 分剧本语料 ──
-    P("## 十四 · 分剧本语料（同一作者写不同世界时的腔调差异）")
-    P("")
-    P("> 每个剧本／副本是一个独立世界，腔调与用词不同。写哪个本的同人，先翻对应那一节。")
-    P("")
-    arcs = arc_digests(cfg)
-    for arc in arcs:
-        P("### 剧本：%s（%s → %s，%d 章 ≈ %d 字）" % (
-            arc["name"], arc["first"], arc["last"], arc["chapters"], arc["chars"]))
-        P("")
-        for s in arc["samples"]:
-            P("```")
-            P(s)
-            P("```")
-        P("")
+    # ── 十四 分剧本语料（仅同人/IF 模式）──
+    arcs = []
+    if not style_only:
+        arcs = arc_digests(cfg)
+        max_arcs = max(4, int(round(10 * scale)))
+        arcs_show = arcs[:max_arcs]
+        s14 = [
+            "> 每个剧本／副本是一个独立世界，腔调与用词不同。写哪个本的同人，先翻对应那一节。",
+            "",
+        ]
+        for arc in arcs_show:
+            s14.append("### 剧本：%s（%s → %s，%d 章 ≈ %d 字）" % (
+                arc["name"], arc["first"], arc["last"], arc["chapters"], arc["chars"]))
+            s14.append("")
+            for s in arc["samples"][:3]:
+                s14.append("```")
+                s14.append(clean_fn(s))
+                s14.append("```")
+            s14.append("")
+        add_sec("## 十五 · 分剧本语料（同一作者写不同世界时的腔调差异）", s14, 1.0)
 
     # ── 十五 使用禁令（放最后，当自检清单用）──
     bans = ""
     bp = project.resolve_bans_file(cfg)
     if bp:
         bans = textio.read_text(bp).strip()
-    P("## 十五 · 使用禁令 / 常见误区（写完自检用）")
-    P("")
-    P("> 定稿前扫一遍。这一节拦的是模型最容易犯的错：照抄开篇特殊写法、写本书没有的设定、把分期角色写死。")
-    P("")
-    if bans:
-        P(bans)
-    else:
-        P("<!-- 在 config/bans.md 里写本书的硬禁区。 -->")
-    P("")
+    s15 = [
+        "> 定稿前扫一遍。这一节拦的是模型最容易犯的错：照抄开篇特殊写法、写本书没有的设定、把分期角色写死。",
+        "",
+        bans if bans else "<!-- 在 config/bans.md 里写本书的硬禁区。 -->",
+    ]
+    add_sec("## 十六 · 使用禁令 / 常见误区（写完自检用）", s15, 2.5, keep_tail=True)
+
+    # ── 组装文档头 + 预算裁剪 + 统计看板 ──
+    mode_tags = []
+    mode_tags.append("纯文风蒸馏" if style_only else "同人/IF全套")
+    mode_tags.append("已脱敏" if anonymize else "原名保留")
+    mode_str = " · ".join(mode_tags)
+
+    book_label = "通用文风样本" if style_only else (cfg.get("name") or "")
+    header_placeholder = [
+        "# %s · 典型例子集" % book_label,
+        "> 容量统计：__STATS_BANNER__",
+        "（文风语料 ｜ 全部摘自原文 ｜ 供仿写与提示词取用）",
+        "",
+        "配套：`整书总结.md`（设定/剧情/状态/IF）。本文只负责文风与语感。"
+        if not style_only else
+        "本文件已剥离原书剧情与角色绑定，专供仿写语感、句式节奏与动作细节参考。",
+        "阅读顺序建议：先看【一 文风速览】定口径，写动作翻【四 细粒度笔法与镜头细节】【九 描写套路】，",
+        "写对白查【五 对白回合】【六 %s】，收尾前用【%s】自检。" % (
+            "语体与台词功能范例" if style_only else "台词分角色",
+            "十六 使用禁令",
+        ),
+        "",
+        "=" * 60,
+        "",
+    ]
+
+    doc = _budget_trim_sections(header_placeholder, sections, binfo)
+    banner_line = budget.format_stats_banner(doc.replace("__STATS_BANNER__", ""), budget_info=binfo) + " ｜ 模式 " + mode_str
+    doc = doc.replace("__STATS_BANNER__", banner_line, 1)
+    # 替换真实看板长度可能略微变动（~20字），确保最终统计精确一致
+    final_banner = budget.format_stats_banner(doc, budget_info=binfo) + " ｜ 模式 " + mode_str
+    doc = re.sub(r"^> 容量统计：.*$", "> 容量统计：" + final_banner, doc, count=1, flags=re.MULTILINE)
 
     out = a.out or os.path.join(cfg["paths"]["out"], "例子.txt")
-    textio.write_text(out, "\n".join(L).strip() + "\n")
-    n = len("\n".join(L))
+    textio.write_text(out, doc)
+    print("容量统计：%s" % final_banner)
     print("例子集：%d 字 ｜ 角色档案 %d 个 ｜ 搭配概念 %d ｜ 剧本 %d ｜ 零频词 %d" % (
-        n, len(masks), len(X.get("搭配") or {}), len(arcs), len(X.get("零频词") or [])))
+        len(doc), len(masks), len(X.get("搭配") or {}), len(arcs), len(X.get("零频词") or [])))
     print("→ %s" % out)
     print("下一步：python scripts/10_build_summary.py")
 

@@ -15,6 +15,8 @@ import argparse
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+from lib import project      # noqa: E402
 
 
 def run_step(desc, script_name, *args, env=None):
@@ -40,19 +42,22 @@ def main():
 
     env = dict(os.environ)
     cfg_arg = ["--config", args.config] if args.config else []
+    cfg = project.load_chat_config(args.config)
+    work_dir = project.chat_work_dir(cfg)
 
     source_arg = []
     role_name = "贴吧老哥/群友"
-    out_file = os.path.join(ROOT, "work", "out", "群聊人设提示词.md")
+    out_file = os.path.join(work_dir, "out", "群聊人设提示词.md")
 
     # 0. 如果指定了贴吧，先在线抓取
     if args.tieba:
         forum = args.tieba.replace("吧", "")
         role_name = f"{forum}吧老哥"
-        raw_json = os.path.join(ROOT, "work", f"tieba_{forum}.json")
-        out_file = os.path.join(ROOT, "work", "out", f"{forum}吧人设提示词.md")
+        raw_json = os.path.join(work_dir, f"tieba_{forum}.json")
+        out_file = os.path.join(work_dir, "out", f"{forum}吧人设提示词.md")
 
-        run_step(f"0 在线拉取【{forum}吧】语料", "chat_fetch_tieba.py", "--tieba", forum, "--count", str(args.count), "--out", raw_json, env=env)
+        fetch_args = ["--tieba", forum, "--count", str(args.count), "--out", raw_json] + cfg_arg
+        run_step(f"0 在线拉取【{forum}吧】语料", "chat_fetch_tieba.py", *fetch_args, env=env)
         source_arg = ["--source", raw_json]
 
     # 1. 清洗与会话重组

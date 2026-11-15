@@ -29,14 +29,19 @@ from lib import project, textio      # noqa: E402
 BLOCK = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
 
 
+LEAF_CONTAINERS = {"div", "li", "blockquote"}
+SUB_BLOCKS = set(BLOCK) | {"p"} | LEAF_CONTAINERS
+
+
 class BlockParser(HTMLParser):
-    """把 HTML 拆成 (tag, text) 的块序列。h1-h6 与 p 作为块，div 透明。"""
+    """把 HTML 拆成 (tag, text) 的块序列。h1-h6、p、li 作为块，div/blockquote 仅作叶子块。"""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.blocks = []
         self._cur = None
         self._buf = []
+        self._skip = 0
 
     def _flush(self, tag=None):
         t = " ".join("".join(self._buf).split())
@@ -45,25 +50,102 @@ class BlockParser(HTMLParser):
         self._buf = []
 
     def handle_starttag(self, tag, attrs):
+        if tag in ("head", "script", "style"):
+            self._skip += 1
+            return
+        if self._skip:
+            return
         if tag in BLOCK:
-            self._flush()
+            self._flush(self._cur or "p")
             self._cur = tag
-        elif tag == "p":
-            self._flush()
+        elif tag in ("p", "li"):
+            self._flush(self._cur or "p")
             self._cur = "p"
-        elif tag in ("br",):
+        elif tag in ("div", "blockquote"):
+            self._flush(self._cur or "p")
+        elif tag == "br":
             self._buf.append("\n")
 
     def handle_endtag(self, tag):
-        if tag in BLOCK or tag == "p":
-            if self._cur == tag or (tag in BLOCK and self._cur in BLOCK):
+        if tag in ("head", "script", "style"):
+            self._skip = max(0, self._skip - 1)
+            return
+        if self._skip:
+            return
+        if tag in BLOCK:
+            if self._cur == tag or self._cur in BLOCK:
                 self._flush(tag)
                 self._cur = None
-        elif tag == "div" and self._cur is None:
+        elif tag in ("p", "li"):
+            if self._cur in ("p", None):
+                self._flush("p")
+                self._cur = None
+        elif tag in ("div", "blockquote") and self._cur is None:
             self._flush("p")
 
     def handle_data(self, data):
-        self._buf.append(data)
+        if not self._skip:
+            self._buf.append(data)
+
+
+def _lxml_walk(el, out):
+    def clean_txt(chunks):
+        return " ".join("".join(chunks).split())
+
+    def has_sub_block(node):
+        return any(
+            isinstance(d.tag, str) and d.tag in SUB_BLOCKS
+            for d in node.iterdescendants()
+        )
+
+    def walk(node):
+        tag = node.tag if isinstance(node.tag, str) else ""
+        if tag in ("head", "script", "style"):
+            return
+        if tag in BLOCK:
+            t = clean_txt(node.itertext())
+            if t:
+                out.append((tag, t))
+            return
+        if tag == "p" and not has_sub_block(node):
+            t = clean_txt(node.itertext())
+            if t:
+                out.append(("p", t))
+            return
+        if tag in LEAF_CONTAINERS and not has_sub_block(node):
+            t = clean_txt(node.itertext())
+            if t:
+                out.append(("p", t))
+            return
+
+        buf = []
+        if node.text:
+            buf.append(node.text)
+
+        def flush_buf():
+            t = clean_txt(buf)
+            if t:
+                out.append(("p", t))
+            buf.clear()
+
+        for child in node:
+            ctag = child.tag if isinstance(child.tag, str) else ""
+            if ctag in ("script", "style"):
+                if child.tail:
+                    buf.append(child.tail)
+                continue
+            if ctag in SUB_BLOCKS or (ctag and has_sub_block(child)):
+                flush_buf()
+                walk(child)
+            elif ctag == "br":
+                buf.append("\n")
+            elif ctag:
+                buf.extend(child.itertext())
+            if child.tail:
+                buf.append(child.tail)
+        flush_buf()
+
+    walk(el)
 
 
 def blocks_from_html(hs, use_lxml=False):
@@ -71,19 +153,18 @@ def blocks_from_html(hs, use_lxml=False):
         try:
             from lxml import html as LH
             doc = LH.fromstring(hs)
+            root = getattr(doc, "body", None)
+            if root is None:
+                root = doc
             out = []
-            for el in doc.body.iter():
-                if el.tag in BLOCK or el.tag == "p":
-                    t = " ".join(" ".join(el.itertext()).split())
-                    if t:
-                        out.append((el.tag, t))
+            _lxml_walk(root, out)
             if out:
                 return out
         except Exception:
             pass
     p = BlockParser()
     p.feed(hs)
-    p._flush()
+    p._flush(p._cur or "p")
     return p.blocks
 
 
@@ -119,6 +200,22 @@ def epub_spine(z):
     return files
 
 
+def _resolve_offsets(out, heads):
+    if not heads:
+        return
+    raw_joined = "\n".join(out)
+    lead = len(raw_joined) - len(raw_joined.lstrip())
+    raw_pos = []
+    p = 0
+    for s in out:
+        raw_pos.append(p)
+        p += len(s) + 1
+    for h in heads:
+        idx = h.pop("_idx")
+        # out[idx] 形如 "\n# title" / "\n## title" / "\n### title"
+        h["offset"] = raw_pos[idx] + 1 - lead
+
+
 def extract_epub(path, drop):
     with zipfile.ZipFile(path) as z:
         files = epub_spine(z)
@@ -129,14 +226,9 @@ def extract_epub(path, drop):
         except ImportError:
             pass
 
-        out, heads, pos = [], [], 0
+        out, heads = [], []
         cur = {"h1": "", "h2": ""}
         skip = False
-
-        def emit(s):
-            nonlocal pos
-            out.append(s)
-            pos += len(s) + 1
 
         for f in files:
             try:
@@ -150,28 +242,29 @@ def extract_epub(path, drop):
                         continue
                     skip = False
                     cur = {"h1": t, "h2": ""}
-                    heads.append({"level": 1, "title": t, "offset": pos})
-                    emit("\n# " + t)
+                    heads.append({"level": 1, "title": t, "_idx": len(out)})
+                    out.append("\n# " + t)
                 elif tag == "h2":
                     if t in drop:
                         skip = True
                         continue
                     skip = False
                     cur["h2"] = t
-                    heads.append({"level": 2, "title": t, "offset": pos, "h1": cur["h1"]})
-                    emit("\n## " + t)
+                    heads.append({"level": 2, "title": t, "_idx": len(out), "h1": cur["h1"]})
+                    out.append("\n## " + t)
                 elif tag in ("h3", "h4", "h5", "h6"):
                     if t in drop:
                         skip = True
                         continue
                     skip = False
-                    heads.append({"level": 3, "title": t, "offset": pos,
+                    heads.append({"level": 3, "title": t, "_idx": len(out),
                                   "h2": cur["h2"], "h1": cur["h1"]})
-                    emit("\n### " + t)
+                    out.append("\n### " + t)
                 else:
                     if skip:
                         continue
-                    emit(t)
+                    out.append(t)
+        _resolve_offsets(out, heads)
         return out, heads, len(files)
 
 
@@ -179,14 +272,9 @@ def extract_docx(path, drop):
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
     paras = re.findall(r"<w:p\b.*?</w:p>|<w:p\b[^>]*/>", xml, re.S)
-    out, heads, pos = [], [], 0
+    out, heads = [], []
     cur = {"h1": "", "h2": ""}
     skip = False
-
-    def emit(s):
-        nonlocal pos
-        out.append(s)
-        pos += len(s) + 1
 
     for p in paras:
         t = "".join(html.unescape(x) for x in re.findall(r"<w:t\b[^>]*>(.*?)</w:t>", p, re.S))
@@ -204,28 +292,29 @@ def extract_docx(path, drop):
                 continue
             skip = False
             cur = {"h1": t, "h2": ""}
-            heads.append({"level": 1, "title": t, "offset": pos})
-            emit("\n# " + t)
+            heads.append({"level": 1, "title": t, "_idx": len(out)})
+            out.append("\n# " + t)
         elif lvl == 2:
             if t in drop:
                 skip = True
                 continue
             skip = False
             cur["h2"] = t
-            heads.append({"level": 2, "title": t, "offset": pos, "h1": cur["h1"]})
-            emit("\n## " + t)
+            heads.append({"level": 2, "title": t, "_idx": len(out), "h1": cur["h1"]})
+            out.append("\n## " + t)
         elif lvl >= 3:
             if t in drop:
                 skip = True
                 continue
             skip = False
-            heads.append({"level": 3, "title": t, "offset": pos,
+            heads.append({"level": 3, "title": t, "_idx": len(out),
                           "h2": cur["h2"], "h1": cur["h1"]})
-            emit("\n### " + t)
+            out.append("\n### " + t)
         else:
             if skip:
                 continue
-            emit(t)
+            out.append(t)
+    _resolve_offsets(out, heads)
     return out, heads, len(paras)
 
 
@@ -239,14 +328,9 @@ TXT_H1 = re.compile(r"^\s*(第[0-9０-９零〇一二三四五六七八九十百
 
 def extract_txt(path, drop):
     text = textio.read_text(path)
-    out, heads, pos = [], [], 0
+    out, heads = [], []
     cur = {"h1": "", "h2": ""}
     skip = False
-
-    def emit(s):
-        nonlocal pos
-        out.append(s)
-        pos += len(s) + 1
 
     for ln in text.split("\n"):
         s = ln.strip()
@@ -259,19 +343,20 @@ def extract_txt(path, drop):
         if m:
             skip = False
             cur = {"h1": s, "h2": ""}
-            heads.append({"level": 1, "title": s, "offset": pos})
-            emit("\n# " + s)
+            heads.append({"level": 1, "title": s, "_idx": len(out)})
+            out.append("\n# " + s)
             continue
         m = TXT_HEAD.match(s)
         if m and len(s) <= 40:
             skip = False
             cur["h2"] = s
-            heads.append({"level": 2, "title": s, "offset": pos, "h1": cur["h1"]})
-            emit("\n## " + s)
+            heads.append({"level": 2, "title": s, "_idx": len(out), "h1": cur["h1"]})
+            out.append("\n## " + s)
             continue
         if skip:
             continue
-        emit(s)
+        out.append(s)
+    _resolve_offsets(out, heads)
     return out, heads, 1
 
 

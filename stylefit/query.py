@@ -3,10 +3,11 @@
 """style-fit · 查询接口。写之前先查，别靠语感。
 
   python stylefit/query.py --index cache/mybook/index.json --list
-  python stylefit/query.py --index ... --who 白夜 [--func 让步接受]
+  python stylefit/query.py --index ... --who 主角 [--func 让步接受]
   python stylefit/query.py --index ... --colloc [概念]
   python stylefit/query.py --index ... --dict [场景]      # 场景词典
   python stylefit/query.py --index ... --why <描写意图>
+  python stylefit/query.py --index ... --craft [笔法类别]
   python stylefit/query.py --index ... --scene <场景>
   python stylefit/query.py --index ... --words
   python stylefit/query.py --index ... --stats
@@ -34,6 +35,7 @@ def main():
     ap.add_argument("--dict", nargs="?", const="__all__", dest="dict_",
                     help="场景词典：某类场景在书里用什么词")
     ap.add_argument("--why")
+    ap.add_argument("--craft", nargs="?", const="__all__")
     ap.add_argument("--scene")
     ap.add_argument("--words", action="store_true")
     ap.add_argument("--stats", action="store_true")
@@ -46,6 +48,7 @@ def main():
         head("可用项")
         print("人物：", "、".join(X["台词"].keys()))
         print("意图：", "、".join(X["描写"].keys()))
+        print("笔法细节：", "、".join(X.get("笔法细节", {}).keys()))
         print("搭配：", "、".join(X["搭配"].keys()))
         print("场景：", "、".join(X["场景"].keys()))
         return
@@ -115,6 +118,22 @@ def main():
         head("描写意图 · %s（原书 %d 处）" % (a.why, d["n"]))
         for s in d["样本"]:
             print("  " + s)
+        return
+
+    if a.craft:
+        C_ = X.get("笔法细节", {})
+        if not C_:
+            print("索引中没有笔法细节，请用新版 build_index.py 重建索引")
+            return
+        keys = list(C_.keys()) if a.craft == "__all__" else [a.craft]
+        for k in keys:
+            items = C_.get(k)
+            if items is None:
+                print("没有这个笔法类别：%s（可用：%s）" % (k, "、".join(C_.keys())))
+                continue
+            head("笔法细节 · %s（采样 %d 条）" % (k, len(items)))
+            for s in items:
+                print("  " + s)
         return
 
     if a.scene:

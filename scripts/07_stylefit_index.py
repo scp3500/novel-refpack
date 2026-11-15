@@ -10,6 +10,7 @@
 """
 import os
 import sys
+import shlex
 import argparse
 import subprocess
 
@@ -42,7 +43,7 @@ def main():
     if attrib:
         cmd += ["--attrib", attrib]
     if a.extra:
-        cmd += a.extra.split()
+        cmd += shlex.split(a.extra)
 
     print("$ %s" % " ".join(cmd))
     sys.exit(subprocess.call(cmd))

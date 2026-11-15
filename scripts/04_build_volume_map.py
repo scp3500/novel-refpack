@@ -76,18 +76,20 @@ def main():
     a = ap.parse_args()
 
     cfg = project.load(a.config)
-    raw = textio.read_text(os.path.join(cfg["paths"]["raw"], "_all.txt"))
+    raw_path = os.path.join(cfg["paths"]["raw"], "_all.txt")
+    if not os.path.isfile(raw_path):
+        raise SystemExit("缺 raw/_all.txt，先跑 scripts/00_extract.py")
+    raw = textio.read_text(raw_path)
     secs = textio.read_json(os.path.join(cfg["paths"]["raw"], "sections.json"), []) or []
-    if not secs:
-        raise SystemExit("缺 raw/sections.json，先跑 scripts/00_extract.py")
 
     # 偏移校验：sections.json 的 offset 必须能在正文里对上标题
-    ok = 0
-    for h in secs[:50]:
-        seg = raw[h["offset"]:h["offset"] + len(h["title"]) + 6]
-        if h["title"][:6] in seg:
-            ok += 1
-    print("偏移校验：%d / %d" % (ok, len(secs[:50])))
+    if secs:
+        ok = 0
+        for h in secs[:50]:
+            seg = raw[h["offset"]:h["offset"] + len(h["title"]) + 6]
+            if h["title"][:6] in seg:
+                ok += 1
+        print("偏移校验：%d / %d" % (ok, len(secs[:50])))
 
     man = textio.read_json(project.artifact(cfg, "manifest.json"), None)
     if not man:
@@ -106,35 +108,54 @@ def main():
         return sorted((h for h in secs if h.get("level") == level
                        and isinstance(h.get("offset"), int)), key=lambda h: h["offset"])
 
+    unit_level = "h2"
     h2s = heads(2)
-    if not h2s:                       # 没识别出章节层级：退回用 h3
+    if not h2s:                       # 没识别出章节层级：退回用 h3，再退回用 h1
         h2s = heads(3)
-        print("警告：没有 h2 标题，改用 h3（%d 个）" % len(h2s))
-    if not h2s:
-        raise SystemExit("sections.json 里没有任何章节标题，检查 Stage 0 的标题识别")
-    h1_offsets = [h["offset"] for h in heads(1)]
-
-    # 结束位置要按全部卷算，--range 只是少写几卷，不能让最后一卷吞掉后文
-    bounds = []
-    for k, h in enumerate(h2s):
-        start = h["offset"]
-        end = h2s[k + 1]["offset"] if k + 1 < len(h2s) else len(raw)
-        for o in h1_offsets:          # 不跨 h1 版块
-            if start < o < end:
-                end = o
-        bounds.append((h, start, end))
-    if a.range:
-        bounds = bounds[:a.range]
+        if h2s:
+            unit_level = "h3"
+            print("警告：没有 h2 标题，改用 h3（%d 个）" % len(h2s))
+        else:
+            h2s = heads(1)
+            if h2s:
+                unit_level = "h1"
+                print("警告：没有 h2/h3 标题，改用 h1（%d 个）" % len(h2s))
 
     vols = []
-    for i, (h, start, end) in enumerate(bounds, 1):
-        body = raw[start:end].strip() + "\n"
-        fn = "vol_%02d.txt" % i
-        textio.write_text(os.path.join(outdir, fn), body)
-        vols.append({"i": i, "h1": h.get("h1", ""), "h2": h["title"],
-                     "start": start, "end": end, "chars": len(body),
-                     "file": "volumes/" + fn,
-                     "chunks": overlapping_chunks(raw, start, end, spans)})
+    if h2s:
+        h1_offsets = [h["offset"] for h in heads(1)] if unit_level != "h1" else []
+
+        # 结束位置要按全部卷算，--range 只是少写几卷，不能让最后一卷吞掉后文
+        bounds = []
+        for k, h in enumerate(h2s):
+            start = h["offset"]
+            end = h2s[k + 1]["offset"] if k + 1 < len(h2s) else len(raw)
+            for o in h1_offsets:          # 不跨 h1 版块
+                if start < o < end:
+                    end = o
+            bounds.append((h, start, end))
+        if a.range:
+            bounds = bounds[:a.range]
+
+        for i, (h, start, end) in enumerate(bounds, 1):
+            body = raw[start:end].strip() + "\n"
+            fn = "vol_%02d.txt" % i
+            textio.write_text(os.path.join(outdir, fn), body)
+            vols.append({"i": i, "h1": h.get("h1", ""), "h2": h["title"],
+                         "start": start, "end": end, "chars": len(body),
+                         "file": "volumes/" + fn,
+                         "chunks": overlapping_chunks(raw, start, end, spans)})
+    else:
+        print("提示：完全无章节标题，按 manifest.json 分片自动生成虚拟卷（%d 个）" % len(spans))
+        target_spans = spans[:a.range] if a.range else spans
+        for i, (n, start, end) in enumerate(target_spans, 1):
+            body = raw[start:end].strip() + "\n"
+            fn = "vol_%02d.txt" % i
+            textio.write_text(os.path.join(outdir, fn), body)
+            vols.append({"i": i, "h1": "", "h2": "分段 %02d" % n,
+                         "start": start, "end": end, "chars": len(body),
+                         "file": "volumes/" + fn,
+                         "chunks": [n]})
 
     textio.write_json(project.artifact(cfg, "volume_map.json"), vols)
     print("卷数：%d ｜ 合计 %d 字" % (len(vols), sum(v["chars"] for v in vols)))
@@ -150,7 +171,7 @@ def main():
         orphan = [n for n, _, _ in spans if n not in hit]
         if orphan:
             print("提示：%d 片不属于任何卷（第一个 %s 之前的前言等）：%s" % (
-                len(orphan), "h2" if heads(2) else "h3", ",".join(map(str, orphan))))
+                len(orphan), unit_level, ",".join(map(str, orphan))))
     print("→ work/volume_map.json")
     print("下一步：python scripts/05_run_volumes.py")
 

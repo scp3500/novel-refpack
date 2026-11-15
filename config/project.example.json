@@ -1,6 +1,6 @@
 {
   "name": "mybook",
-  "source": "D:/books/mybook.epub",
+  "source": "books/mybook.epub",
 
   "chunk_chars": 60000,
   "quote_open": ["“", "「", "『"],
@@ -16,6 +16,17 @@
 
   "bans_file": "config/bans.md",
   "drop_headings": ["简介", "制作信息", "封面及彩页"],
+
+  "style_only": false,
+  "anonymize": false,
+
+  "budget": {
+    "preset": "standard",
+    "target_kb": null,
+    "max_tokens": null,
+    "example_ratio": 0.70,
+    "_说明": "preset 可选 compact(60KB≈1.6万tokens) / standard(150KB≈4万tokens) / rich(300KB≈8万tokens) / full(全量不限)；也可直接填 target_kb 或 max_tokens。example_ratio 默认 0.70（例子占 70%，整书总结占 30%）"
+  },
 
   "hard_settings": [
     "这里列 5-10 条不可改的世界观底线（谁是谁、能力规则、不能违反的因果）"

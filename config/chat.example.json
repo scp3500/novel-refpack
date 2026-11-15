@@ -1,7 +1,8 @@
 {
-  "name": "tieba_deepseek",
+  "name": "tieba_demo",
   "mode": "chat",
-  "source": "E:/pi_agent/tools/tieba-cli/hot_comments.json",
+  "source": "work/tieba_demo.json",
+  "work_dir": "work",
   "format": "tieba_json",
 
   "target_user": "",
