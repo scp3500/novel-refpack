@@ -42,7 +42,22 @@ DEFAULTS = {
     "concurrency": 16,
     "command": "",
     "extra_body": {},
+    "strip_think": True,
 }
+
+
+class NonRetryableError(RuntimeError):
+    """400/401/403/404 等确定性客户端错误，重试无意义。"""
+
+
+class RetryableHTTPError(RuntimeError):
+    """429/5xx 等临时性 HTTP 错误，可按 Retry-After 退避重试。"""
+    def __init__(self, msg, retry_after=None):
+        super().__init__(msg)
+        self.retry_after = retry_after
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
 
 
 # ────────────────────────── openai 后端 ──────────────────────────
@@ -58,17 +73,37 @@ class OpenAIBackend:
             "model": self.cfg["model"],
             "messages": ([{"role": "system", "content": system}] if system else [])
                         + [{"role": "user", "content": prompt}],
-            "temperature": self.cfg["temperature"],
-            "max_tokens": self.cfg["max_tokens"],
         }
+        if self.cfg.get("temperature") is not None:
+            body["temperature"] = self.cfg["temperature"]
+        if self.cfg.get("max_tokens") is not None:
+            body["max_tokens"] = self.cfg["max_tokens"]
         body.update(self.cfg.get("extra_body") or {})
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             self.url, data=data,
             headers={"Content-Type": "application/json",
                      "Authorization": "Bearer " + self.key})
-        with urllib.request.urlopen(req, timeout=self.cfg["timeout"]) as r:
-            j = json.loads(r.read().decode("utf-8", errors="ignore"))
+        try:
+            with urllib.request.urlopen(req, timeout=self.cfg["timeout"]) as r:
+                j = json.loads(r.read().decode("utf-8", errors="ignore"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", errors="ignore").strip()[:300]
+            except Exception:
+                pass
+            msg = "HTTP %s：%s" % (e.code, detail or e.reason)
+            if e.code in (429, 500, 502, 503, 504):
+                ra = None
+                try:
+                    raw_ra = e.headers.get("Retry-After") if e.headers else None
+                    if raw_ra is not None:
+                        ra = max(0.5, min(60.0, float(raw_ra)))
+                except ValueError:
+                    ra = None
+                raise RetryableHTTPError(msg, retry_after=ra) from e
+            raise NonRetryableError(msg) from e
         ch = j.get("choices") or []
         if not ch:
             raise RuntimeError("接口没返回 choices：%s" % str(j)[:300])
@@ -76,7 +111,10 @@ class OpenAIBackend:
         txt = msg.get("content")
         if isinstance(txt, list):   # 兼容 [{type:text,text:...}]
             txt = "".join(x.get("text", "") for x in txt if isinstance(x, dict))
-        return (txt or "").strip()
+        txt = (txt or "").strip()
+        if self.cfg.get("strip_think", True):
+            txt = _THINK_RE.sub("", txt).strip()
+        return txt
 
 
 # ────────────────────────── command 后端 ──────────────────────────
@@ -254,10 +292,13 @@ def run_batch(jobs, work, concurrency=16, label="job", logdir="logs",
             try:
                 work(key, payload)
                 return key, None
+            except NonRetryableError as e:
+                return key, e
             except Exception as e:      # noqa: BLE001
                 last = e
                 if attempt < tries:
-                    ABORT.wait(min(30, 2 ** attempt))
+                    wait = getattr(e, "retry_after", None) or min(30, 2 ** attempt)
+                    ABORT.wait(wait)
         return key, last
 
     ABORT.clear()

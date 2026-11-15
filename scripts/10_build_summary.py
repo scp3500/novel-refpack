@@ -133,10 +133,10 @@ def main():
         body = section_of(fore, ("分歧", "IF")) or fore[:1500]
     block(True, "## 0.4 IF / 续写分歧点", body, "在 config 里配 if_points，或靠 meta_foreshadow")
 
-    bp = os.path.join(ROOT, "config", "bans.md")
+    bp = project.resolve_bans_file(cfg)
     block(True, "## 0.5 禁区（不能写什么）",
-          textio.read_text(bp).strip() if os.path.isfile(bp) else "",
-          "写 config/bans.md")
+          textio.read_text(bp).strip() if bp else "",
+          "写 config/bans.md 或配置 bans_file")
 
     P("---")
     P("")

@@ -70,7 +70,7 @@ def main():
     # 5 二层卷纪要与元章节
     if not args.no_llm:
         run_step("5 二层卷纪要（并发）", "05_run_volumes.py", *(cfg_arg + par_arg), env=env)
-        run_step("5b 元章节（世界观/角色/势力/结局/伏笔）", "05_run_volumes.py", "--meta", *cfg_arg, env=env)
+        run_step("5b 元章节（世界观/角色/势力/结局/伏笔）", "05_run_volumes.py", *(["--meta"] + cfg_arg + par_arg), env=env)
 
     # 6 台词归属
     run_step("6 台词归属", "06_build_attrib.py", *cfg_arg, env=env)
@@ -86,6 +86,13 @@ def main():
 
     # 产物概览
     out_dir = os.path.join(ROOT, "work", "out")
+    try:
+        sys.path.insert(0, ROOT)
+        from lib import project
+        cfg = project.load(env.get("REFPACK_CONFIG"))
+        out_dir = cfg["paths"]["out"]
+    except SystemExit:
+        pass
     print("\n产物目录：%s" % out_dir)
     if os.path.isdir(out_dir):
         for f in sorted(os.listdir(out_dir)):

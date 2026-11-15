@@ -18,6 +18,7 @@
 """
 import os
 import sys
+import glob
 import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,6 +99,8 @@ def main():
 
     outdir = cfg["paths"]["volumes"]
     os.makedirs(outdir, exist_ok=True)
+    for old in glob.glob(os.path.join(outdir, "vol_*.txt")):
+        os.unlink(old)
 
     def heads(level):
         return sorted((h for h in secs if h.get("level") == level

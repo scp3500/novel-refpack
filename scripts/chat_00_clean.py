@@ -120,7 +120,7 @@ def clean_qq_txt(raw_text, cfg):
         m = head_re.match(line)
         if m:
             if cur_who and cur_text:
-                msgs.append({"who": cur_who, "text": "\n".join(cur_text).strip()})
+                msgs.append({"author": cur_who, "text": "\n".join(cur_text).strip()})
             cur_who = m.group(2).strip()
             cur_text = []
         else:
@@ -128,16 +128,19 @@ def clean_qq_txt(raw_text, cfg):
                 cur_text.append(line.strip())
 
     if cur_who and cur_text:
-        msgs.append({"who": cur_who, "text": "\n".join(cur_text).strip()})
+        msgs.append({"author": cur_who, "text": "\n".join(cur_text).strip()})
 
     text_drops = cfg.get("drop_text_patterns", [])
     min_c = cfg.get("min_chars", 2)
     max_c = cfg.get("max_chars", 300)
+    target_user = (cfg.get("target_user") or "").strip()
 
-    # 简单切 Session：每 20 条切一段
+    # 简单切 Session：每 15 条切一段
     sessions = []
     chunk = []
     for m in msgs:
+        if target_user and m["author"] != target_user:
+            continue
         if is_dropped_text(m["text"], text_drops, min_c, max_c):
             continue
         chunk.append(m)
@@ -169,7 +172,7 @@ def main():
     parser.add_argument("--source", default=None, help="覆盖源文件路径")
     args = parser.parse_args()
 
-    cfg = load_chat_config(args.config)
+    cfg = project.load_chat_config(args.config)
     source = args.source or cfg.get("source", "")
     if not os.path.isabs(source):
         source = os.path.join(ROOT, source)
@@ -188,7 +191,7 @@ def main():
         text = textio.read_text(source)
         threads, d_posts, d_comments = clean_qq_txt(text, cfg)
 
-    work_dir = os.path.join(ROOT, "work")
+    work_dir = project.chat_work_dir(cfg)
     os.makedirs(work_dir, exist_ok=True)
     out_path = os.path.join(work_dir, "chat_threads.json")
 

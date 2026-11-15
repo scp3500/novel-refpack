@@ -18,7 +18,7 @@ from collections import Counter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from lib import textio
+from lib import textio, project
 
 
 def percentile(arr, p):
@@ -36,7 +36,9 @@ def main():
     parser.add_argument("--config", default=None, help="配置文件路径")
     args = parser.parse_args()
 
-    threads_path = os.path.join(ROOT, "work", "chat_threads.json")
+    cfg = project.load_chat_config(args.config)
+    work_dir = project.chat_work_dir(cfg)
+    threads_path = os.path.join(work_dir, "chat_threads.json")
     if not os.path.isfile(threads_path):
         sys.stderr.write("未找到 %s，请先运行 chat_00_clean.py\n" % threads_path)
         sys.exit(1)
@@ -126,7 +128,7 @@ def main():
         "零频黑名单_书面与AI词": dead_words
     }
 
-    out_path = os.path.join(ROOT, "work", "chat_metrics.json")
+    out_path = os.path.join(work_dir, "chat_metrics.json")
     textio.write_json(out_path, metrics)
 
     print("硬指标统计完成：")

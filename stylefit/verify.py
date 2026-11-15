@@ -24,7 +24,9 @@ import re
 import sys
 import json
 import math
+import pickle
 import random
+import hashlib
 import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -100,29 +102,34 @@ def cset(p):
             if t[i] not in STOP and t[i + 1] not in STOP}
 
 
-def jacCt(ps):
+def jacCt_sets(sets):
     s = n = 0
-    for i in range(1, len(ps)):
-        a, b = cset(ps[i - 1]), cset(ps[i])
+    for i in range(1, len(sets)):
+        a, b = sets[i - 1], sets[i]
         u = len(a | b)
         s += len(a & b) / u if u else 0
         n += 1
     return s / n if n else 0.0
 
 
+def jacCt(ps):
+    return jacCt_sets([cset(p) for p in ps])
+
+
 def ratio(ps, K=400, seed=31337):
     R = random.Random(seed)
-
-    def sh(a):
-        a = a[:]
-        for i in range(len(a) - 1, 0, -1):
-            j = R.randrange(i + 1)
-            a[i], a[j] = a[j], a[i]
-        return a
-    obs = jacCt(ps)
+    sets = [cset(p) for p in ps]
+    n = len(sets)
+    obs = jacCt_sets(sets)
+    if n < 2:
+        return 1.0
+    idx = list(range(n))
     acc = 0.0
     for _ in range(K):
-        acc += jacCt(sh(ps))
+        for i in range(n - 1, 0, -1):
+            j = R.randrange(i + 1)
+            idx[i], idx[j] = idx[j], idx[i]
+        acc += jacCt_sets([sets[k] for k in idx])
     return (obs + 1e-4) / (acc / K + 1e-4)
 
 
@@ -153,38 +160,115 @@ def main():
                     help="参考区间按场景切，例 '(猫|尾巴|摸头)'；不填用全书")
     ap.add_argument("--ref-req", default=None)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--no-cache", action="store_true", help="忽略并重建 verify 模型缓存")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
-    raw, _ = C.load_corpus(a.corpus)
+    raw, files = C.load_corpus(a.corpus)
+    if not raw.strip():
+        print("语料为空：", a.corpus)
+        sys.exit(1)
     paras_all = C.paragraphs(raw)
     text = open(a.text, encoding="utf-8").read().lstrip("\ufeff")
     tparas = [x.strip() for x in text.split("\n") if x.strip()]
 
-    # ── 0 频探针：表用 90% 的段，基准量剩下 10% ──
-    pool = paras_all[:]
-    random.Random(7).shuffle(pool)
-    cut = max(200, len(pool) // 10)
-    hold, trainp = pool[:cut], pool[cut:]
-    bg = set()
-    for p in trainp:
-        c = re.sub(r"[^\u4e00-\u9fff]", "", p)
-        for i in range(len(c) - 3):
-            bg.add(c[i:i + 4])
+    # ── 语料指纹缓存（0 频探针集合 + 4-gram 模型 + 校准表）──
+    sig_parts = []
+    for fp in files:
+        try:
+            st = os.stat(fp)
+            sig_parts.append((fp, st.st_size, int(st.st_mtime_ns)))
+        except OSError:
+            sig_parts.append((fp, 0, 0))
+    sig_parts.append(("quotes", tuple(C.QUOTE_OPEN), tuple(C.QUOTE_CLOSE)))
+    corpus_sig = hashlib.sha256(repr(sig_parts).encode("utf-8")).hexdigest()[:16]
+    cache_path = os.path.join(a.out, "verify_cache.pkl")
+    cached = None
+    if not a.no_cache and os.path.isfile(cache_path):
+        try:
+            with open(cache_path, "rb") as fp:
+                obj = pickle.load(fp)
+            if isinstance(obj, dict) and obj.get("sig") == corpus_sig:
+                cached = obj
+        except Exception:
+            cached = None
 
-    def nrate(seg_list):
-        t_ = n_ = 0
-        for p in seg_list:
+    if cached is not None:
+        bg = cached["bg"]
+        base = cached["base"]
+        Bfull = cached["Bfull"]
+        MN = cached["MN"]
+        MD = cached["MD"]
+        CAL = cached["CAL"]
+        rd = cached["rd"]
+        rn = cached["rn"]
+    else:
+        # ── 0 频探针：表用 90% 的段，基准量剩下 10% ──
+        pool = paras_all[:]
+        random.Random(7).shuffle(pool)
+        cut = max(200, len(pool) // 10)
+        hold, trainp = pool[:cut], pool[cut:]
+        bg = set()
+        for p in trainp:
             c = re.sub(r"[^\u4e00-\u9fff]", "", p)
             for i in range(len(c) - 3):
-                t_ += 1
-                if c[i:i + 4] not in bg:
-                    n_ += 1
-        return n_ / max(1, t_)
-    base = nrate(hold)
+                bg.add(c[i:i + 4])
 
+        def nrate(seg_list):
+            t_ = n_ = 0
+            for p in seg_list:
+                c = re.sub(r"[^\u4e00-\u9fff]", "", p)
+                for i in range(len(c) - 3):
+                    t_ += 1
+                    if c[i:i + 4] not in bg:
+                        n_ += 1
+            return n_ / max(1, t_)
+        base = nrate(hold)
+        Bfull = re.sub(r"[^\u4e00-\u9fff]", "", raw)
+
+        # ── 逐句层：训练与校准分开 ──
+        nlines = C.narr_sentences(paras_all)
+        dlines = []
+        for m in C.QUOTE.finditer(raw):
+            x = m.group(1).strip()
+            if len(re.sub(r"\s", "", x)) >= 2:
+                dlines.append(x)
+        random.Random(9).shuffle(nlines)
+        random.Random(11).shuffle(dlines)
+        n_cal, n_tr = nlines[:2500], nlines[2500:22000]
+        d_cal, d_tr = dlines[:4000], dlines[4000:24000]
+        MN, MD = train_ngram(n_tr), train_ngram(d_tr)
+        CAL = {}
+        for tag, M, lines in (("n", MN, n_cal), ("d", MD, d_cal)):
+            for i in range(len(LB)):
+                v = [bits(M, x) for x in lines if lbk(len(re.sub(r"\s", "", x))) == i]
+                if len(v) < 20:
+                    continue
+                mu = sum(v) / len(v)
+                CAL[(tag, i)] = (mu, max((sum((x - mu) ** 2 for x in v) / len(v)) ** .5, 1e-6))
+
+        def zbook(M, lines, tag):
+            out = []
+            for s in lines:
+                L = len(re.sub(r"\s", "", s))
+                c = CAL.get((tag, lbk(L)))
+                if c:
+                    out.append((bits(M, s) - c[0]) / c[1])
+            return out
+        rd = zbook(MD, d_cal[:1500], "d")
+        rn = zbook(MN, n_cal[:1500], "n")
+        try:
+            tmp_p = cache_path + ".tmp"
+            with open(tmp_p, "wb") as fp:
+                pickle.dump({
+                    "sig": corpus_sig,
+                    "bg": bg, "base": base, "Bfull": Bfull,
+                    "MN": MN, "MD": MD, "CAL": CAL, "rd": rd, "rn": rn,
+                }, fp, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_p, cache_path)
+        except Exception:
+            pass
     # ── 新专名检测（会把整层指标抬高，先隔离）──
-    Bfull = re.sub(r"[^\u4e00-\u9fff]", "", raw)
     cand_cnt = {}
     for p in tparas:
         c0 = re.sub(r"[^\u4e00-\u9fff]", "", p)
@@ -281,27 +365,6 @@ def main():
     f = feats(text, tparas)
     outk = [k for k in KW if not (REF[k][0] <= f[k] <= REF[k][1])]
 
-    # ── 逐句层：训练与校准分开 ──
-    nlines = C.narr_sentences(paras_all)
-    dlines = []
-    for m in C.QUOTE.finditer(raw):
-        x = m.group(1).strip()
-        if len(re.sub(r"\s", "", x)) >= 2:
-            dlines.append(x)
-    random.Random(9).shuffle(nlines)
-    random.Random(11).shuffle(dlines)
-    n_cal, n_tr = nlines[:2500], nlines[2500:22000]
-    d_cal, d_tr = dlines[:4000], dlines[4000:24000]
-    MN, MD = train_ngram(n_tr), train_ngram(d_tr)
-    CAL = {}
-    for tag, M, lines in (("n", MN, n_cal), ("d", MD, d_cal)):
-        for i in range(len(LB)):
-            v = [bits(M, x) for x in lines if lbk(len(re.sub(r"\s", "", x))) == i]
-            if len(v) < 20:
-                continue
-            mu = sum(v) / len(v)
-            CAL[(tag, i)] = (mu, max((sum((x - mu) ** 2 for x in v) / len(v)) ** .5, 1e-6))
-
     dial = [x.strip() for p in tparas for x in C.QUOTE.findall(p)
             if len(re.sub(r"\s", "", x.strip())) >= 2]
     narr = C.narr_sentences(tparas)
@@ -320,17 +383,6 @@ def main():
               if len(re.sub(r"\s", "", x.strip())) >= 2]
     narr_m = C.narr_sentences(tparas_m)
     pdm, pnm = sc(dial_m, MD, "d"), sc(narr_m, MN, "n")
-
-    def zbook(M, lines, tag):
-        out = []
-        for s in lines:
-            L = len(re.sub(r"\s", "", s))
-            c = CAL.get((tag, lbk(L)))
-            if c:
-                out.append((bits(M, s) - c[0]) / c[1])
-        return out
-    rd = zbook(MD, d_cal[:1500], "d")
-    rn = zbook(MN, n_cal[:1500], "n")
 
     print("=" * 74)
     print(os.path.basename(a.text))

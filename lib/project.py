@@ -22,6 +22,8 @@ DEFAULTS = {
     "quote_close": ["”", "」", "』"],
     "person": "third",              # third / first，只写进提示词，供模型参考
     "names": [],
+    "aliases": {},                  # {"主名": ["别名1", "昵称2"]}，归属统计时并入主名
+    "bans_file": "",                # 可选，自定义禁区 markdown（相对仓库根或绝对路径）
     "drop_headings": ["简介", "制作信息", "封面及彩页"],
     "protagonist": "",
     "vol_unit_word": "卷",          # 二层归纳的单位叫法：卷 / 章 / 篇 / ARC
@@ -85,6 +87,17 @@ def load(path=None, need_source=False):
     return cfg
 
 
+def resolve_bans_file(cfg):
+    """定位禁区说明文件：优先 project.json 的 bans_file，其次 config/bans.md。"""
+    custom = (cfg.get("bans_file") or "").strip()
+    if custom:
+        p = custom if os.path.isabs(custom) else os.path.join(ROOT, custom)
+        if os.path.isfile(p):
+            return p
+    default = os.path.join(ROOT, "config", "bans.md")
+    return default if os.path.isfile(default) else None
+
+
 def artifact(cfg, name):
     """work/ 下的单个文件，如 manifest.json / attrib.json / all_notes.md。"""
     return os.path.join(cfg["paths"]["work"], name)
@@ -104,6 +117,24 @@ def vol_notes(cfg, with_missing=False):
         return out if with_missing else [x for x in out if os.path.isfile(x[1])]
     files = sorted(glob.glob(os.path.join(vdir, "vol_*.md")), key=textio.natural_key)
     return [(None, f) for f in files]
+
+
+def load_chat_config(path=None):
+    p = path or os.environ.get("CHAT_CONFIG")
+    if not p:
+        cand = os.path.join(ROOT, "config", "chat.json")
+        p = cand if os.path.isfile(cand) else os.path.join(ROOT, "config", "chat.example.json")
+    if not os.path.isfile(p):
+        sys.stderr.write("未找到配置文件：%s\n" % p)
+        sys.exit(2)
+    cfg = textio.read_json(p, {}) or {}
+    cfg["_path"] = p
+    return cfg
+
+
+def chat_work_dir(cfg=None):
+    w = (cfg or {}).get("work_dir") or "work"
+    return w if os.path.isabs(w) else os.path.join(ROOT, w)
 
 
 def prompt(cfg, stem, **kw):

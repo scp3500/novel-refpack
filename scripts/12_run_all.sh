@@ -36,7 +36,7 @@ run "3 汇总 + 片尾覆盖率校验" scripts/03_merge_notes.py
 run "4 卷映射"            scripts/04_build_volume_map.py
 if [ "$SKIP_LLM" = 0 ]; then
   run "5 二层卷纪要（并发）" scripts/05_run_volumes.py ${PAR:+--par "$PAR"}
-  run "5b 元章节（世界观/角色/势力/结局/伏笔）" scripts/05_run_volumes.py --meta
+  run "5b 元章节（世界观/角色/势力/结局/伏笔）" scripts/05_run_volumes.py --meta ${PAR:+--par "$PAR"}
 fi
 run "6 台词归属"          scripts/06_build_attrib.py
 run "7 文风索引"          scripts/07_stylefit_index.py

@@ -15,7 +15,7 @@ import argparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from lib import textio, llm
+from lib import textio, llm, project
 
 
 PROMPT_TEMPLATE = """你是一名敏锐的社交网络语言学与群体行为分析专家。
@@ -79,7 +79,9 @@ def main():
     parser.add_argument("--no-llm", action="store_true", help="纯离线运行，使用内置贴吧/群聊行为规则模板")
     args = parser.parse_args()
 
-    threads_path = os.path.join(ROOT, "work", "chat_threads.json")
+    cfg = project.load_chat_config(args.config)
+    work_dir = project.chat_work_dir(cfg)
+    threads_path = os.path.join(work_dir, "chat_threads.json")
     if not os.path.isfile(threads_path):
         sys.stderr.write("未找到 %s，请先运行 chat_00_clean.py\n" % threads_path)
         sys.exit(1)
@@ -92,19 +94,15 @@ def main():
 
     if args.no_llm:
         print("模式：--no-llm 离线模式，加载内置高拟真人格心理行为学模板")
-        behavior_data = OFFLINE_FALLBACK
+        behavior_data = dict(OFFLINE_FALLBACK)
         behavior_data["_source"] = "offline_template"
     else:
-        cfg_path = args.config or os.path.join(ROOT, "config", "chat.json")
-        if not os.path.isfile(cfg_path):
-            cfg_path = os.path.join(ROOT, "config", "chat.example.json")
-        cfg = textio.read_json(cfg_path, {})
         llm_cfg = cfg.get("llm") or {}
 
         try:
             print("调用模型蒸馏交互心理学特征（后台：%s，模型：%s）..." % (
                 llm_cfg.get("backend", "openai"), llm_cfg.get("model", "default")))
-            caller = llm.build_caller(llm_cfg)
+            caller = llm.build(llm_cfg)
             prompt = PROMPT_TEMPLATE.format(samples=sample_text[:4000])
             res = caller(prompt, system="你是一名严谨的群体社交行为与语言学专家。")
             behavior_data = {
@@ -113,12 +111,12 @@ def main():
             }
         except Exception as e:
             sys.stderr.write("调用模型失败（%s），自动降级为离线高质量模板。\n" % e)
-            behavior_data = OFFLINE_FALLBACK
+            behavior_data = dict(OFFLINE_FALLBACK)
             behavior_data["_source"] = "offline_fallback"
 
     behavior_data["extracted_samples"] = samples[:8]
 
-    out_path = os.path.join(ROOT, "work", "chat_behavior.json")
+    out_path = os.path.join(work_dir, "chat_behavior.json")
     textio.write_json(out_path, behavior_data)
     print("行为心理学特征提炼完成，输出至：%s" % out_path)
 

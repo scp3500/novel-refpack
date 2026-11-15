@@ -227,7 +227,9 @@ def main():
     if not a.force:
         jobs = [j for j in jobs if not (os.path.isfile(j[1]["out"])
                                         and os.path.getsize(j[1]["out"]) > 300)]
-    mats = {k: meta_material(cfg, j["prompt"]) for k, j in jobs} if a.meta else {}
+    meta_limit = int(cfg.get("meta_material_chars") or MATERIAL_CHARS)
+    note_limit = int(cfg.get("volume_note_char_limit") or 9000)
+    mats = {k: meta_material(cfg, j["prompt"], limit=meta_limit) for k, j in jobs} if a.meta else {}
     print("待办 %d ｜ 模式 %s ｜ 并发 %d" % (len(jobs), "meta" if a.meta else "volumes", par))
     if a.dry_run:
         for k, j in jobs:
@@ -242,9 +244,15 @@ def main():
             prompt = project.prompt(cfg, j["prompt"], name=cfg.get("name", ""),
                                     material=mats[k])
         else:
-            body = "\n\n".join(
-                "--- %s ---\n%s" % (os.path.basename(f), textio.read_text(f)[:9000])
-                for f in j["files"])
+            parts = []
+            for f in j["files"]:
+                txt = textio.read_text(f)
+                if len(txt) > note_limit:
+                    print("提示：%s（%d 字）超过单篇上限 %d 字，已截断" % (
+                        os.path.basename(f), len(txt), note_limit))
+                    txt = txt[:note_limit]
+                parts.append("--- %s ---\n%s" % (os.path.basename(f), txt))
+            body = "\n\n".join(parts)
             prompt = project.prompt(cfg, "stage2_volume", name=cfg.get("name", ""),
                                     unit=unit, label=j["label"], notes=body)
         out = backend(prompt, out_file=j["out"]) if lcfg["backend"] == "command" \

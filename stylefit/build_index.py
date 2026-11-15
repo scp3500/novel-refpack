@@ -60,16 +60,28 @@ def quantile_pick(v, k=6):
     return list(dict.fromkeys(picked))
 
 
-def scene_of(txt):
-    if re.search(r"(打|砍|劈|箭|魔法阵|轰|伤口|血|闪避|斩|枪|攻击)", txt):
+def scene_of(txt, rules=None):
+    if rules:
+        for name, pat in rules:
+            if re.search(pat, txt):
+                return name
+        return "日常"
+    if re.search(r"(打|砍|劈|箭|魔法阵|轰|伤口|血|闪避|斩|枪|攻击|剑|刀|杀)", txt):
         return "战斗"
-    if re.search(r"(金币|铜币|价钱|买卖|委托|报酬|账|赊|买|卖)", txt):
+    if re.search(r"(金币|铜币|银两|价钱|买卖|委托|报酬|账|赊|买|卖|交易)", txt):
         return "交易"
-    if re.search(r"(脸红|害羞|亲|吻|抱|嘴唇|羞耻|搂|贴|喘)", txt):
+    if re.search(r"(脸红|害羞|亲|吻|抱|嘴唇|羞耻|搂|贴|喘|心跳)", txt):
         return "亲密"
-    if re.search(r"(道歉|拜托|商量|会议|协会|委托人|谈判|请求)", txt):
+    if re.search(r"(道歉|拜托|商量|会议|协会|委托人|谈判|请求|交涉|条件)", txt):
         return "交涉"
     return "日常"
+
+
+def stride_pick(items, k):
+    n = len(items)
+    if n <= k:
+        return list(items)
+    return [items[int(i * n / k)] for i in range(k)]
 
 
 def main():
@@ -180,13 +192,24 @@ def main():
                 cand += vs
     IDX["零频词"] = sorted({w for w in cand if BR.count(w) == 0})
 
-    # ── 5 场景片段 ──
+    # ── 5 场景片段（全书均匀采样，不偏向前文）──
+    scene_rules = None
+    sr_file = os.path.join(a.config, "scene_rules.json")
+    if os.path.isfile(sr_file):
+        sr_raw = json.load(open(sr_file, encoding="utf-8"))
+        scene_rules = [(k, v) for k, v in sr_raw.items() if not k.startswith("_")]
+
     bs = defaultdict(list)
     for i, p in enumerate(paras):
-        s = scene_of(p)
-        if len(bs[s]) < 400:
-            bs[s].append("\n".join(paras[max(0, i - 3):i + 5]))
-    IDX["场景"] = {s: {"n": len(v), "样本": v[:4]} for s, v in bs.items()}
+        s = scene_of(p, scene_rules)
+        bs[s].append(i)
+    IDX["场景"] = {}
+    for s, idxs in bs.items():
+        picks = stride_pick(idxs, 4)
+        IDX["场景"][s] = {
+            "n": len(idxs),
+            "样本": ["\n".join(paras[max(0, idx - 3):idx + 5]) for idx in picks],
+        }
 
     # ── 6 统计靶 ──
     L = [t for _, t in pairs if len(re.sub(r"\s", "", t)) >= 2]

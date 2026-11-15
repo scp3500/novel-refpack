@@ -47,9 +47,22 @@ COLON = ("：", ":")
 CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
-def make_attributor(names, verbs=VERBS):
-    """返回 attribute(lines) -> [{who, text}]。lines 是按段落切好的行。"""
-    names = sorted(set(n for n in names if n), key=len, reverse=True)
+def make_attributor(names, verbs=VERBS, aliases=None):
+    """返回 attribute(lines) -> [{who, text}]。lines 是按段落切好的行。
+
+    aliases: 可选 {"主名": ["别名1", "昵称2"]}；匹配到的别名会规范化为主名。
+    """
+    alias_map = {}
+    all_names = list(names or [])
+    for canon, alts in (aliases or {}).items():
+        if not canon:
+            continue
+        all_names.append(canon)
+        for a in alts or ():
+            if a and a != canon:
+                alias_map[a] = canon
+                all_names.append(a)
+    names = sorted(set(n for n in all_names if n), key=len, reverse=True)
     if not names:
         raise ValueError("names 为空")
     alt = "|".join(re.escape(n) for n in names)
@@ -67,11 +80,14 @@ def make_attributor(names, verbs=VERBS):
         return "".join(p if k % 2 else not_speech.sub(lambda m: "＿" * len(m.group()), p)
                        for k, p in enumerate(parts))
 
+    def canon(who):
+        return alias_map.get(who, who) if who else who
+
     def names_in(s):
-        return list(dict.fromkeys(name_re.findall(s)))
+        return list(dict.fromkeys(canon(n) for n in name_re.findall(s)))
 
     def subject_of(s):
-        got = list(dict.fromkeys(subj_re.findall(mask(s))))
+        got = list(dict.fromkeys(canon(n) for n in subj_re.findall(mask(s))))
         return got[0] if len(got) == 1 else None
 
     def has_verb(s):
@@ -119,8 +135,10 @@ def make_attributor(names, verbs=VERBS):
         if not nx or nx.startswith("#") or nx.endswith(COLON) or C.QUOTE.search(nx):
             return None
         m = subj_re.match(mask(nx))
-        if m and subject_of(nx) == m.group(1):
-            return m.group(1)
+        if m:
+            w = canon(m.group(1))
+            if subject_of(nx) == w:
+                return w
         return None
 
     def speaker(lines, i):
@@ -160,9 +178,12 @@ def main():
 
     cfg = project.load(a.config)
     names = [x.strip() for x in (a.names or ",".join(cfg.get("names") or [])).split(",") if x.strip()]
+    aliases = cfg.get("aliases") or {}
+    if not names and aliases:
+        names = list(aliases.keys())
     if not names:
         raise SystemExit("config 里没有 names（角色名列表），自动抓归属需要它")
-    attribute = make_attributor(names)
+    attribute = make_attributor(names, aliases=aliases)
 
     pairs = []
     files = sorted(glob.glob(os.path.join(cfg["paths"]["chunks"], "chunk_*.txt")),

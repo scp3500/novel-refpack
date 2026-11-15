@@ -13,7 +13,7 @@ import argparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from lib import textio
+from lib import textio, project
 
 
 def main():
@@ -24,9 +24,11 @@ def main():
     args = parser.parse_args()
 
     role_name = args.name or "贴吧老哥/老群友"
+    cfg = project.load_chat_config(args.config)
+    work_dir = project.chat_work_dir(cfg)
 
-    metrics_p = os.path.join(ROOT, "work", "chat_metrics.json")
-    behavior_p = os.path.join(ROOT, "work", "chat_behavior.json")
+    metrics_p = os.path.join(work_dir, "chat_metrics.json")
+    behavior_p = os.path.join(work_dir, "chat_behavior.json")
 
     if not os.path.isfile(metrics_p):
         sys.stderr.write("缺少 %s，请先运行 chat_01_metrics.py\n" % metrics_p)
@@ -106,7 +108,7 @@ def main():
     P("```")
     P("")
 
-    out_dir = os.path.join(ROOT, "work", "out")
+    out_dir = os.path.join(work_dir, "out")
     os.makedirs(out_dir, exist_ok=True)
     out_file = args.out or os.path.join(out_dir, "群聊人设提示词.md")
 

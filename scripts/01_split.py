@@ -11,6 +11,7 @@ manifest 记每片的起止标题、字数、所属 h1，以及在 raw/_all.txt 
 """
 import os
 import sys
+import glob
 import argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,6 +32,8 @@ def main():
         raise SystemExit("先跑 scripts/00_extract.py（缺 %s）" % src)
     outdir = cfg["paths"]["chunks"]
     os.makedirs(outdir, exist_ok=True)
+    for old in glob.glob(os.path.join(outdir, "chunk_*.txt")):
+        os.unlink(old)
 
     text = textio.read_text(src)
     units = textio.parse_units(text)

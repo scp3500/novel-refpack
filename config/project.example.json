@@ -10,7 +10,11 @@
   "vol_unit_word": "卷",
 
   "names": ["主角", "女主", "配角甲", "配角乙"],
+  "aliases": {
+    "主角": ["主角昵称"]
+  },
 
+  "bans_file": "config/bans.md",
   "drop_headings": ["简介", "制作信息", "封面及彩页"],
 
   "hard_settings": [

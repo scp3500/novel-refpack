@@ -19,6 +19,7 @@ import json
 import html
 import zipfile
 import argparse
+import urllib.parse
 from html.parser import HTMLParser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,65 +113,71 @@ def epub_spine(z):
     spine = re.findall(r'<itemref[^>]*idref="([^"]+)"', opf)
     files = []
     for s in spine:
-        h = items.get(s, "")
-        if h.endswith((".html", ".xhtml", ".htm")):
+        h = urllib.parse.unquote(items.get(s, "").split("#", 1)[0])
+        if h.lower().endswith((".html", ".xhtml", ".htm")):
             files.append(os.path.normpath(os.path.join(base, h)).replace("\\", "/"))
     return files
 
 
 def extract_epub(path, drop):
-    z = zipfile.ZipFile(path)
-    files = epub_spine(z)
-    lxml_ok = False
-    try:
-        import lxml  # noqa: F401
-        lxml_ok = True
-    except ImportError:
-        pass
-
-    out, heads, pos = [], [], 0
-    cur = {"h1": "", "h2": ""}
-    skip = False
-
-    def emit(s):
-        nonlocal pos
-        out.append(s)
-        pos += len(s) + 1
-
-    for f in files:
+    with zipfile.ZipFile(path) as z:
+        files = epub_spine(z)
+        lxml_ok = False
         try:
-            hs = z.read(f).decode("utf-8", errors="ignore")
-        except KeyError:
-            continue
-        for tag, t in blocks_from_html(hs, lxml_ok):
-            if tag == "h1":
-                skip = False
-                cur = {"h1": t, "h2": ""}
-                heads.append({"level": 1, "title": t, "offset": pos})
-                emit("\n# " + t)
-            elif tag == "h2":
-                skip = False
-                cur["h2"] = t
-                heads.append({"level": 2, "title": t, "offset": pos, "h1": cur["h1"]})
-                emit("\n## " + t)
-            elif tag in ("h3", "h4", "h5", "h6"):
-                if t in drop:
-                    skip = True
-                    continue
-                skip = False
-                heads.append({"level": 3, "title": t, "offset": pos,
-                              "h2": cur["h2"], "h1": cur["h1"]})
-                emit("\n### " + t)
-            else:
-                if skip:
-                    continue
-                emit(t)
-    return out, heads, len(files)
+            import lxml  # noqa: F401
+            lxml_ok = True
+        except ImportError:
+            pass
+
+        out, heads, pos = [], [], 0
+        cur = {"h1": "", "h2": ""}
+        skip = False
+
+        def emit(s):
+            nonlocal pos
+            out.append(s)
+            pos += len(s) + 1
+
+        for f in files:
+            try:
+                hs = z.read(f).decode("utf-8", errors="ignore")
+            except KeyError:
+                continue
+            for tag, t in blocks_from_html(hs, lxml_ok):
+                if tag == "h1":
+                    if t in drop:
+                        skip = True
+                        continue
+                    skip = False
+                    cur = {"h1": t, "h2": ""}
+                    heads.append({"level": 1, "title": t, "offset": pos})
+                    emit("\n# " + t)
+                elif tag == "h2":
+                    if t in drop:
+                        skip = True
+                        continue
+                    skip = False
+                    cur["h2"] = t
+                    heads.append({"level": 2, "title": t, "offset": pos, "h1": cur["h1"]})
+                    emit("\n## " + t)
+                elif tag in ("h3", "h4", "h5", "h6"):
+                    if t in drop:
+                        skip = True
+                        continue
+                    skip = False
+                    heads.append({"level": 3, "title": t, "offset": pos,
+                                  "h2": cur["h2"], "h1": cur["h1"]})
+                    emit("\n### " + t)
+                else:
+                    if skip:
+                        continue
+                    emit(t)
+        return out, heads, len(files)
 
 
 def extract_docx(path, drop):
-    z = zipfile.ZipFile(path)
-    xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
+    with zipfile.ZipFile(path) as z:
+        xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
     paras = re.findall(r"<w:p\b.*?</w:p>|<w:p\b[^>]*/>", xml, re.S)
     out, heads, pos = [], [], 0
     cur = {"h1": "", "h2": ""}
@@ -192,30 +199,49 @@ def extract_docx(path, drop):
             d = re.search(r"(\d)", st.group(1))
             lvl = int(d.group(1)) if d else 1
         if lvl == 1:
+            if t in drop:
+                skip = True
+                continue
+            skip = False
             cur = {"h1": t, "h2": ""}
             heads.append({"level": 1, "title": t, "offset": pos})
             emit("\n# " + t)
         elif lvl == 2:
+            if t in drop:
+                skip = True
+                continue
+            skip = False
             cur["h2"] = t
             heads.append({"level": 2, "title": t, "offset": pos, "h1": cur["h1"]})
             emit("\n## " + t)
         elif lvl >= 3:
+            if t in drop:
+                skip = True
+                continue
+            skip = False
             heads.append({"level": 3, "title": t, "offset": pos,
                           "h2": cur["h2"], "h1": cur["h1"]})
             emit("\n### " + t)
         else:
+            if skip:
+                continue
             emit(t)
     return out, heads, len(paras)
 
 
-TXT_HEAD = re.compile(r"^\s*(第[0-9零一二三四五六七八九十百千两]+[卷部章话回节])[\s　]*(?!课)([^\n]{0,50})$")
-TXT_H1 = re.compile(r"^\s*(第[0-9零一二三四五六七八九十百千两]+[卷部])[\s　]*([^\n]{0,60})$")
+TXT_HEAD = re.compile(
+    r"^\s*(?:第[0-9０-９零〇一二三四五六七八九十百千两]+[卷部章话回节]"
+    r"|序(?:章|言|曲)|楔子|引子|尾声|终章|后记|番外(?:\s*[0-9一二三四五六七八九十]+)?)"
+    r"(?:$|[\s　:：·・\-—]+(?![课])[^\n]{0,50})$"
+)
+TXT_H1 = re.compile(r"^\s*(第[0-9０-９零〇一二三四五六七八九十百千两]+[卷部])(?:$|[\s　:：\-—]+[^\n]{0,60})$")
 
 
 def extract_txt(path, drop):
     text = textio.read_text(path)
     out, heads, pos = [], [], 0
     cur = {"h1": "", "h2": ""}
+    skip = False
 
     def emit(s):
         nonlocal pos
@@ -226,17 +252,24 @@ def extract_txt(path, drop):
         s = ln.strip()
         if not s:
             continue
+        if s in drop:
+            skip = True
+            continue
         m = TXT_H1.match(s)
         if m:
+            skip = False
             cur = {"h1": s, "h2": ""}
             heads.append({"level": 1, "title": s, "offset": pos})
             emit("\n# " + s)
             continue
         m = TXT_HEAD.match(s)
         if m and len(s) <= 40:
+            skip = False
             cur["h2"] = s
             heads.append({"level": 2, "title": s, "offset": pos, "h1": cur["h1"]})
             emit("\n## " + s)
+            continue
+        if skip:
             continue
         emit(s)
     return out, heads, 1

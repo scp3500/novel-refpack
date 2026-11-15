@@ -154,10 +154,10 @@ TOPICS = [
 ]
 
 
-def topic_digests(paras, per=12, win=3):
+def topic_digests(paras, topics=None, per=12, win=3):
     """按主题从原文抽大段片段，均匀铺到全书。"""
     out = []
-    for title, pat in TOPICS:
+    for title, pat in (topics or TOPICS):
         rx = re.compile(pat)
         hits = [i for i, p in enumerate(paras) if len(p) >= 30 and rx.search(p)]
         picked, seen = [], set()
@@ -173,15 +173,25 @@ def topic_digests(paras, per=12, win=3):
 
 
 def arc_base(t):
-    t = re.sub(r"^第[0-9]+章\s*", "", t or "")
+    t = re.sub(r"^第[0-9０-９零〇一二三四五六七八九十百千两]+章\s*", "", t or "")
     return re.split(r"[（(【]", t)[0].strip()
+
+
+def load_topics(cfg):
+    p = os.path.join(ROOT, "config", "stylefit", "topics.json")
+    if os.path.isfile(p):
+        d = textio.read_json(p, {}) or {}
+        items = [(k, v) for k, v in d.items() if not k.startswith("_") and isinstance(v, str)]
+        if items:
+            return items
+    return TOPICS
 
 
 def arc_digests(cfg, min_ch=3, win=2):
     """按剧本 / 副本切语料：同一个作者写不同世界时的腔调差异。
 
     剧本名从章标题「第NNN章 XXXX（一）」的前缀取；
-    同一剧本被主线插断时会拆成多段，按名字合并。
+    同一剧本被主线插断时会拆成多段，按各自连续区间切片后再合并，避免把中间主线卷进来。
     """
     secs = textio.read_json(os.path.join(cfg["paths"]["raw"], "sections.json"), []) or []
     raw = textio.read_text(os.path.join(cfg["paths"]["raw"], "_all.txt"))
@@ -204,30 +214,42 @@ def arc_digests(cfg, min_ch=3, win=2):
             i += 1
     merged = {}
     for b, i, j, n in runs:
-        if b in merged:
-            f, _, l, total = merged[b]
-            merged[b] = (f, i, max(l, j), total + n)
-        else:
-            merged[b] = (i, i, j, n)
-    items = sorted(merged.items(), key=lambda kv: -kv[1][3])
+        if b not in merged:
+            merged[b] = {"runs": [], "chapters": 0}
+        merged[b]["runs"].append((i, j))
+        merged[b]["chapters"] += n
+    items = sorted(merged.items(), key=lambda kv: -kv[1]["chapters"])
     out = []
-    for name, (first, _i, last, ch) in items:
-        start = offs[first]
-        end = offs[last] if last < len(secs) else len(raw)
-        body = [p.strip() for p in C.paragraphs(raw[start:end])]
+    for name, info in items:
+        ch = info["chapters"]
+        segs_body = []
+        total_chars = 0
+        for r_start, r_end in info["runs"]:
+            start = offs[r_start]
+            end = offs[r_end] if r_end < len(secs) else len(raw)
+            total_chars += max(0, end - start)
+            segs_body.append([p.strip() for p in C.paragraphs(raw[start:end])])
         per = 5 if ch >= 20 else (4 if ch >= 8 else 3)
-        picks = stride_pick([n for n, p in enumerate(body) if len(p) >= 30], per)
+        # 在各连续段内部采样，防止跨段滑窗越界到无关章节
+        cand_passages = []
+        for body in segs_body:
+            for n, p in enumerate(body):
+                if len(p) >= 30:
+                    passage = "\n".join(x for x in body[max(0, n - 1):n + win] if x).strip()
+                    if passage:
+                        cand_passages.append(passage)
         samples, seen = [], set()
-        for n in picks:
-            passage = "\n".join(x for x in body[max(0, n - 1):n + win] if x).strip()
+        for passage in stride_pick(cand_passages, per):
             key = passage[:50]
             if key in seen:
                 continue
             seen.add(key)
             samples.append(passage)
-        out.append({"name": name, "first": secs[first].get("title"),
-                    "last": secs[last - 1].get("title"), "chapters": ch,
-                    "chars": end - start, "samples": samples})
+        first_idx = info["runs"][0][0]
+        last_idx = info["runs"][-1][1]
+        out.append({"name": name, "first": secs[first_idx].get("title"),
+                    "last": secs[last_idx - 1].get("title"), "chapters": ch,
+                    "chars": total_chars, "samples": samples})
     return out
 
 
@@ -416,7 +438,7 @@ def main():
     P("")
     secs = textio.read_json(os.path.join(cfg["paths"]["raw"], "sections.json"), []) or []
     all_t = [s.get("title") for s in secs if s.get("title")]
-    named = [t for t in all_t if re.match(r"^第[0-9]+章\s+\S", t)]
+    named = [t for t in all_t if re.match(r"^第[0-9０-９零〇一二三四五六七八九十百千两]+[章节回话卷]\s+\S", t)]
     P("（全书 %d 章，其中 %d 章原文就没给标题、只写「第 N 章」，此处只列有标题的 %d 个；"
       "写番外时不要给这些无名章补造标题。）" % (
           len(all_t), len(all_t) - len(named), len(named)))
@@ -428,7 +450,7 @@ def main():
     # ── 十三 专项摘录 ──
     P("## 十三 · 专项摘录（按主题的大段原文，写同类场景前先扫一遍）")
     P("")
-    for title, segs in topic_digests(paras):
+    for title, segs in topic_digests(paras, topics=load_topics(cfg)):
         P("### %s" % title)
         P("")
         for s in segs:
@@ -455,8 +477,8 @@ def main():
 
     # ── 十五 使用禁令（放最后，当自检清单用）──
     bans = ""
-    bp = os.path.join(ROOT, "config", "bans.md")
-    if os.path.isfile(bp):
+    bp = project.resolve_bans_file(cfg)
+    if bp:
         bans = textio.read_text(bp).strip()
     P("## 十五 · 使用禁令 / 常见误区（写完自检用）")
     P("")
