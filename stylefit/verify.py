@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""style-fit · 五层验收 + Layer 0 卫生/反AI探针 + 照抄检测 + 跨领域适配。
+"""style-fit · 五层验收 + Layer 0 基础排雷/反AI探针 + 照抄检测 + 跨领域适配。
 
 用法：
   python stylefit/verify.py --text 稿子.txt --corpus chunks --out cache/mybook [选项]
@@ -1185,7 +1185,7 @@ def analyze_draft(
     masked_terms = sorted(set(picked) | set(user_terms), key=lambda x: (-len(x), x))
     booknames = list((index_data.get("台词") or {}).keys())
 
-    # ── Layer 0: 卫生、黑名单、低频搭配、标点密度、语料拟合 AI 探针 ──
+    # ── Layer 0: 基础排雷、黑名单、低频搭配、标点密度、语料拟合 AI 探针 ──
     garbled = detect_garbled_scripts(numbered_lines, model.get("corpus_scripts") or {})
     zero_hits = detect_zero_freq_hits(numbered_lines, index_data)
     low_collocs = detect_low_freq_collocs(numbered_lines, index_data)
@@ -1530,7 +1530,7 @@ def format_text_report(report, quiet=False):
         )
 
     # Layer 0 摘要
-    lines.append("── Layer 0 · 卫生、黑名单与语料拟合反 AI 探针（共 %d 项）──" % l0["total_issues"])
+    lines.append("── Layer 0 · 基础排雷、黑名单与语料拟合反 AI 探针（共 %d 项）──" % l0["total_issues"])
     if l0["garbled_scripts"]:
         lines.append("  [异常脚本/乱码] %d 处（原书该脚本 <5 字）：" % len(l0["garbled_scripts"]))
         for h in l0["garbled_scripts"][:10]:
