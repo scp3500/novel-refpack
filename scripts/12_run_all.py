@@ -52,6 +52,8 @@ def main():
                         help="纯文风模式同时输出脱敏版与原名对照版（互不串台）")
     parser.add_argument("--prewarm-verify", action="store_true",
                         help="流水线结束前自动预热 verify_cache.pkl，避免首次验稿等待")
+    parser.add_argument("--wiki", action="store_true",
+                        help="额外在 work/wiki/ 生成面向本地 Coding Agent 按需阅读的互联 Wiki 目录（默认单文件打包不受影响）")
     parser.add_argument("--yes", "-y", action="store_true", help="跳过交互式规模确认提示")
     parser.add_argument("--ask-size", action="store_true", help="主动交互询问目标产物大小（KB / 档位）")
     args = parser.parse_args()
@@ -152,6 +154,9 @@ def main():
 
         # 10 合并生成参考包
         run_step("10 合并生成参考包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args + pack_extra), env=env)
+
+    if args.wiki:
+        run_step("额外生成 Agent Wiki 目录", "13c_build_wiki.py", *(cfg_arg + style_args), env=env)
 
     if args.prewarm_verify:
         run_step("预热验稿缓存（verify_cache.pkl）", "11_verify.py", *(["--prewarm"] + cfg_arg), env=env)

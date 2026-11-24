@@ -12,7 +12,8 @@
 
 - **题材预设开箱即用**：内置 `general`（通用文学，零奇幻偏置）、`modern`（现代都市校园恋爱）、`fantasy`（奇幻异世界系统）、`tieba`（贴吧群聊）四套 `stylefit_dir` 规则预设，支持 `.epub` / `.docx` / `.txt` / `.srt` / `.ass` / Galgame 脚本抽取（含 EPUB TOC 回退与自动过滤版权/奥付页）。
 - **目标书高频词表直接对齐**：`07_stylefit_index.py` 与 `09_build_examples.py` 自动从原书提取并嵌入 **高频特征词表**（`index.json["高频词"]`，直接写入 `例子.txt` / `纯文风包.md`），并支持 `08_stylefit_query.py --top-words` 与 `07b_discover_style.py` 零配置发现，让写作模型直接贴齐原书高频词而非凭空猜词。
-- **第 0–4 层量化验收与 Agent 改稿闭环**：`11_verify.py` 区分**同题材续写**与**跨题材纯文风仿写**（`--cross-domain --domain-terms`），内置第 0 层卫生拦截（乱码、零频词、低频搭配平替、语料拟合 AI 探针、照抄例句粘贴检测）、视点分桶（`--pov`）、Top-N 异常句定位（`--top-z`）、改稿指南（`--guide`）、版本对比（`--diff`）与 HTML 可视化报告（`--html`）。
+- **第 0–4 层量化验收与 Agent 改稿闭环**：`11_verify.py` 区分**同题材续写**与**跨题材纯文风仿写**（`--cross-domain --domain-terms`），内置第 0 层基础排雷拦截（乱码、零频词、低频搭配平替、语料拟合 AI 探针、照抄例句粘贴检测）、视点分桶（`--pov`）、Top-N 异常句定位（`--top-z`）、改稿指南（`--guide`）、版本对比（`--diff`）与 HTML 可视化报告（`--html`）。
+- **可选 Agent Wiki 目录模式（`--wiki` / `scripts/13c_build_wiki.py`）**：默认产物保持单文件参考包不变；如果你用本地 Coding Agent（Claude Code / Codex / Pi / Cursor / Antigravity）逐章写作，可加 `--wiki` 额外产出 `work/wiki/` 互联目录（每章按需读 2–4 页，并支持 `--check-stale` 检测源分片变动）。
 
 ---
 
@@ -83,12 +84,13 @@ python -X utf8 scripts/12_run_all.py --no-llm --yes  # 仅离线步骤（抽文�
 ## 详细文档
 
 - Agent 技能与闭环入口：[`SKILL.md`](SKILL.md) / [`stylefit/SKILL.md`](stylefit/SKILL.md)
-- 高阶创作模式与纯文风用法：[`docs/MODES.md`](docs/MODES.md)
+- 仓库路径地图与 Agent 协作约束：[`AGENTS.md`](AGENTS.md) / [`REPO_MAP.md`](REPO_MAP.md)（运行 `python scripts/repo_check.py` 校验）
+- 高阶创作模式、纯文风与可选 `--wiki` 模式：[`docs/MODES.md`](docs/MODES.md)
 - 完整流水线细节与全部新脚本参数：[`docs/WORKFLOW.md`](docs/WORKFLOW.md)
 - 配置文件与分题材预设说明：[`docs/CONFIG.md`](docs/CONFIG.md)
 - 产物骨架与 Prompt 模板：[`docs/TEMPLATES.md`](docs/TEMPLATES.md)
 - 并行调度与子代理原理：[`docs/PARALLEL.md`](docs/PARALLEL.md)
-- 双轨验收指标、第 0 层卫生与排查：[`docs/PITFALLS.md`](docs/PITFALLS.md)
+- 双轨验收指标、第 0 层基础排雷与排查：[`docs/PITFALLS.md`](docs/PITFALLS.md)
 
 ## License
 

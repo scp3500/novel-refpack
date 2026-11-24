@@ -24,7 +24,8 @@ description: 把长篇小说、剧本/字幕或群聊语料加工成轻量喂模
 2. **纯文风灵活蒸馏（`--style-only --anonymize`）**：无需调大模型跑章节摘要，纯本地秒级提取叙述节奏、连续动作链、五感环境细节、对白呼吸感、**目标书高频特征词表**、搭配雷区与零频黑名单；支持 `anonymize_style=neutral`（某甲/某乙）或 `names`（自然假名）、`anonymize_terms`（地名/专名脱敏）与 `single_char_names`（单字人名安全脱敏），直接用于全新原创小说。
 3. **目标书高频词驱动写作（Vocab-Aligned Writing）**：`07_stylefit_index.py` 与 `09_build_examples.py` 自动从目标书统计并内嵌 **高频特征词表**（`index.json["高频词"]`，直接写入 `例子.txt` / `纯文风包.md`），并支持 `08_stylefit_query.py --top-words` 与 `07b_discover_style.py` 零配置探索，让写作模型直接对齐原书真实高频词汇，而非凭空猜测。
 4. **多书文风混搭（`scripts/13b_blend_style.py`）**：按维度（叙述骨架 / 动作细节 / 对白节奏）自动合成多部作品的纯文风参考包。
-5. **群聊 / 贴吧人设蒸馏（`scripts/chat_run.py`）**：从贴吧或 QQ 群记录逆向蒸馏高拟真 System Prompt。
+5. **可选 Agent Wiki 模式（`--wiki` / `scripts/13c_build_wiki.py`，仅面向本地 Coding Agent）**：默认单文件打包（`参考包.md` / `纯文风包.md`）保持不变；加 `--wiki` 可额外在 `work/wiki/` 生成互联 Markdown 目录（`AGENTS.md`、`route.md`、`index.md`、`style/*.md`、`characters/*.md`、`world.md`、`volumes/*.md`、`meta/contradictions.md`、`_sources.json` 与 `log.md`），让写作 Agent 每章按需读 2–4 页，并用 `--check-stale` 检测源分片变动。
+6. **群聊 / 贴吧人设蒸馏（`scripts/chat_run.py`）**：从贴吧或 QQ 群记录逆向蒸馏高拟真 System Prompt。
 
 ---
 
@@ -43,10 +44,12 @@ python scripts/12_run_all.py --style-only --anonymize --kb 120 --prewarm-verify 
 python scripts/12_run_all.py --preset standard --ratio 0.70 --yes
 python scripts/12_run_all.py --kb 200 --ratio 0.75 --yes
 
-# 3. 单独按不同容量 / 脱敏风格重打包（秒级完成，不重跑模型）
+# 3. 单独按不同容量 / 脱敏风格重打包，或按需生成本地 Agent Wiki（秒级完成，不重跑模型）
 python scripts/13_build_pack.py --preset compact
 python scripts/13_build_pack.py --kb 150 --ratio 0.75 --emit-both --anonymize-style names
 python scripts/13b_blend_style.py --narr packA.md --dialogue packB.md --out work/out/混搭文风包.md
+python scripts/13c_build_wiki.py --style-only --anonymize   # 可选：生成 work/wiki/ 供本地 Coding Agent 按需阅读
+python scripts/13c_build_wiki.py --check-stale              # 可选：比对分片 SHA-256，检测 Wiki 是否陈旧
 
 # 4. 写前查高频词、搭配与导出提示卡
 python scripts/08_stylefit_query.py --top-words           # 查看目标书高频特征词表
@@ -67,7 +70,7 @@ python scripts/08_stylefit_query.py --export-card card.md # 导出精简场景/�
    # 跨题材纯文风仿写（如用名著文风写现代题材）
    python scripts/11_verify.py --text v1.md --cross-domain --domain-terms '新题材专词1,新题材专词2' --pov third --guide --json report_v1.json
    ```
-2. **清理第 0 层卫生问题（优先级最高，必须归零）**：
+2. **清理第 0 层基础排雷项（优先级最高，必须归零）**：
    - 清除乱码 / 非目标文字字符；
    - 替换命中的**零频词**与**低频错配搭配**（直接采纳 `--guide` 给出的原书高频平替搭配）；
    - 替换由目标语料拟合出的 AI 高发探针词；
@@ -84,4 +87,4 @@ python scripts/08_stylefit_query.py --export-card card.md # 导出精简场景/�
    ```
    确认第 0 层清零、结构与虚词骨架贴合、`z` 与 0 频探针收敛达标后交付最终稿件。
 
-文风拟合底层原理、八种 AI 违和形态与第 0–4 层验收详解见 [`stylefit/SKILL.md`](stylefit/SKILL.md)，完整模式、流水线与避坑边界见 [`docs/MODES.md`](docs/MODES.md)、[`docs/WORKFLOW.md`](docs/WORKFLOW.md)、[`docs/CONFIG.md`](docs/CONFIG.md) 与 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
+文风拟合底层原理、八种 AI 违和形态与第 0–4 层验收详解见 [`stylefit/SKILL.md`](stylefit/SKILL.md)，完整模式、流水线与避坑边界见 [`docs/MODES.md`](docs/MODES.md)、[`docs/WORKFLOW.md`](docs/WORKFLOW.md)、[`docs/CONFIG.md`](docs/CONFIG.md) 与 [`docs/PITFALLS.md`](docs/PITFALLS.md)。仓库自身结构速查见 [`AGENTS.md`](AGENTS.md) 与自包含路径地图 [`REPO_MAP.md`](REPO_MAP.md)（修改仓库代码后可运行 `python scripts/repo_check.py` 做一致性检查）。

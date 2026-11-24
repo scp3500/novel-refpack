@@ -88,7 +88,7 @@ python scripts/11_verify.py --text v1.md --guide --json work/out/v1.json --top-z
 python scripts/11_verify.py --text v1.md --cross-domain --domain-terms '咖啡,地铁,手机' --pov third --guide --json work/out/v1.json
 ```
 
-1. **清理第 0 层卫生问题（必须清零）**：修复乱码/非目标文字、替换命中的零频词与低频错配搭配（直接采用 `--guide` 推荐的目标书高频平替）、替换语料拟合出的 AI 高发探针词，并确保**照抄例句粘贴 == 0**。
+1. **清理第 0 层基础排雷项（必须清零）**：修复乱码/非目标文字、替换命中的零频词与低频错配搭配（直接采用 `--guide` 推荐的目标书高频平替）、替换语料拟合出的 AI 高发探针词，并确保**照抄例句粘贴 == 0**。
 2. **清理句式型 AI 腔**：按 `config/bans.md` 六大结构套路逐段修剪否定排比、情绪注脚、生理微动作堆砌、滥用破折号与机翻语序。
 3. **对齐目标书高频词**：对照 `08_stylefit_query.py --top-words` 替换生硬或串台的动词/连接词。
 4. **逐句排查 Top-N 高 `z` 句**：查看 `--top-z` 标出的句内 0 频片段——属于新题材合理专名的加入 `--domain-terms`；属于语域串台俗词、翻译腔或生造搭配的就地重写。
@@ -119,3 +119,30 @@ python scripts/chat_run.py --config config/chat.json
 ```
 
 工具会自动统计消息字数分位数（P50/P80/P95）、每千字句号率与空格断句习惯、高频句首发语词与行为交互逻辑，并按实测句号频率动态生成标点规则。
+
+---
+
+## 可选附加模式 · 本地 Coding Agent 互联 Wiki（`--wiki`）
+
+> **定位说明**：默认输出仍为单文件参考包（`参考包.md` / `纯文风包.md`），适合直接投喂任意网页或 API 模型；`--wiki` 为**纯可选扩展**，仅面向在本地使用 Claude Code / Codex / Pi / Cursor / Antigravity 等 Coding Agent 逐章创作的用户。
+
+### 一键命令
+```bash
+# 方式 1：跑全流程时顺带产出 work/wiki/（默认单文件参考包不受影响）
+python scripts/12_run_all.py --style-only --anonymize --preset standard --yes --wiki
+
+# 方式 2：基于已有索引/纪要单独生成或重建 Wiki
+python scripts/13c_build_wiki.py                                # 完整设定 + 角色页 + 分卷页
+python scripts/13c_build_wiki.py --style-only --anonymize       # 仅生成脱敏 style/ 目录
+
+# 方式 3：增量陈旧检测（比对分片 SHA-256 与 _sources.json，不改写文件）
+python scripts/13c_build_wiki.py --check-stale
+```
+
+### 目录结构与按需读法
+- `AGENTS.md` + `route.md` + `index.md`：Agent 入口规约、按写作任务路由表与全页目录（每章只读 2–4 个相关页，省去反复灌入 150 KB 全量包）。
+- `style/{overview,narration,craft,dialogue,vocab,bans}.md`：按职责拆分的统计靶、叙述阶梯、五类笔法、对白功能桶、本书高频特征词与雷区禁令。
+- `characters/<角色>.md`、`world.md`、`volumes/vol_NN.md`（非脱敏 / 完整模式）：单角色语音卡、世界观总览与带 `[[角色]]` 双向链接的分卷页。
+- `meta/contradictions.md` + `_sources.json` + `log.md`：人工矛盾复核队列（重建时**绝不覆盖**手写笔记）、源文件哈希清单与追加式构建日志。
+
+*(面向仓库开发者的路径速查见根目录 [`AGENTS.md`](../AGENTS.md) 与 [`REPO_MAP.md`](../REPO_MAP.md)，可用 `python scripts/repo_check.py` 校对。)*

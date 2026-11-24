@@ -13,7 +13,7 @@
 
 - **完整同人/IF 模式（默认）**：`00 → 01 → 02(LLM) → 03 → 04 → 05(LLM) → 06 → 07 → 09 → 10 → 13`，最终产出 `整书总结.md`、`例子.txt` 与合并后的 `参考包.md`（默认 `standard` 150KB，例子 70% : 摘要 30%）。
 - **纯文风快速模式（`--style-only --anonymize`）**：`00 → 01 → (06b 候选扫描 / 06 归属，可选) → 07 → 09 → 13`，跳过全部 LLM 摘要与卷映射，纯离线几秒生成脱敏 `纯文风包.md`（内置目标书高频特征词表）。
-- **辅助发现 / 混搭 / 验收工具**：`06b_suggest_entities.py`（自动找人名专名）、`07b_discover_style.py`（零配置风格探索）、`08_stylefit_query.py`（写前查高频词/搭配/导提示卡）、`13b_blend_style.py`（多书混搭）、`11_verify.py`（第 0–4 层验收、改稿指南、版本 diff 与 HTML 报告）。
+- **辅助发现 / 混搭 / 可选 Agent Wiki / 验收工具**：`06b_suggest_entities.py`（自动找人名专名）、`07b_discover_style.py`（零配置风格探索）、`08_stylefit_query.py`（写前查高频词/搭配/导提示卡）、`13b_blend_style.py`（多书混搭）、`13c_build_wiki.py`（**可选**，仅面向本地 Coding Agent 按需阅读的 `work/wiki/` 目录与 `--check-stale` 陈旧检测）、`11_verify.py`（第 0–4 层验收、改稿指南、版本 diff 与 HTML 报告）。
 
 ```
 原始语料 ──00_extract──► work/raw/_all.txt ──01_split──► work/chunks/ + manifest.json
@@ -33,7 +33,7 @@
 ```
 
 一键执行：
-- 跨平台 Python：`python -X utf8 scripts/12_run_all.py [--style-only --anonymize] [--preset standard | --kb N] [--ratio 0.7] [--prewarm-verify] [--yes]`
+- 跨平台 Python：`python -X utf8 scripts/12_run_all.py [--style-only --anonymize] [--preset standard | --kb N] [--ratio 0.7] [--wiki] [--prewarm-verify] [--yes]`
 - Bash 环境：`bash scripts/12_run_all.sh [--style-only] [--no-llm]`
 
 ---
@@ -77,7 +77,10 @@
 - 支持 `--cross-domain` + `--domain-terms`（跨题材纯文风仿写专用验收轨道）；
 - 支持 `--diff v1.md v2.md`（迭代前后指标对比）与 `--html report.html`（可视化高亮验收报告）。
 
-### Stage 12, 13 & 13b · 一键编排、合并出包与多书混搭
-- `12_run_all.py`：跨平台一键调度全流程；交互终端未指定预算参数时主动询问目标规模，支持 `--yes`（跳过交互确认）与 `--prewarm-verify`（构建完成后顺手预热验收缓存）。
+### Stage 12, 13, 13b & 13c · 一键编排、合并出包、多书混搭与可选 Agent Wiki
+- `12_run_all.py`：跨平台一键调度全流程；交互终端未指定预算参数时主动询问目标规模，支持 `--yes`（跳过交互确认）、`--prewarm-verify`（构建完成后顺手预热验收缓存），以及可选 `--wiki`（在不改变默认单文件打包的前提下，额外调用 `13c_build_wiki.py` 生成 `work/wiki/`）。
 - `13_build_pack.py`：将《整书总结》前置、《例子集》后置（去重禁区段落），输出 `参考包.md`（或 `--style-only` 下的 `纯文风包.md`）；支持 `--emit-both`（同时保留独立例子集）、`--examples-out`（自定义例子集输出路径）与 `--anonymize-style neutral|names`。
 - `13b_blend_style.py`：按维度（叙述骨架 / 笔法细节 / 对白口癖等）自动合并多份 `纯文风包.md`，生成跨书混搭参考包。
+- `13c_build_wiki.py`（**可选，仅本地 Coding Agent 用**）：将文风靶、五类笔法、对白功能桶、高频词表与（完整模式下的）角色卡/世界观/分卷页拆分为互联 `work/wiki/` 目录，保留 `meta/contradictions.md` 手写笔记，并通过 `_sources.json` + `--check-stale` 识别变更分片。
+
+*(仓库代码路径地图与协作约束见根目录 [`AGENTS.md`](../AGENTS.md) 与 [`REPO_MAP.md`](../REPO_MAP.md)，一致性检查可运行 `python scripts/repo_check.py`。)*
