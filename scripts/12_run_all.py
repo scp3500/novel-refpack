@@ -5,6 +5,7 @@
 使用方式：
   python scripts/12_run_all.py                  # 全跑
   python scripts/12_run_all.py --no-llm         # 只跑离线计算（抽文本→分片→建索引→两份成品）
+  python scripts/12_run_all.py --style-only --anonymize --kb 120
   python scripts/12_run_all.py --par 32         # 覆盖并发数
   python scripts/12_run_all.py --config my.json # 指定配置文件
 
@@ -32,6 +33,7 @@ def run_step(desc, script_name, *args, env=None):
 
 
 def main():
+    textio.ensure_utf8_stdio()
     if sys.version_info < (3, 9):
         sys.stderr.write("需要 Python 3.9+，当前版本：%s\n" % sys.version)
         sys.exit(2)
@@ -44,6 +46,14 @@ def main():
     parser.add_argument("--style-only", action="store_true", help="纯文风模式：跳过 LLM 摘要与卷映射，直接提取脱敏文风包")
     parser.add_argument("--anonymize", action="store_true", help="人名脱敏为中性代称")
     parser.add_argument("--no-anonymize", action="store_true", help="禁用人名脱敏")
+    parser.add_argument("--anonymize-style", choices=["neutral", "names"], default=None,
+                        help="脱敏代称风格：neutral（某甲/某乙）或 names（林远/苏晴/陈默）")
+    parser.add_argument("--emit-both", action="store_true",
+                        help="纯文风模式同时输出脱敏版与原名对照版（互不串台）")
+    parser.add_argument("--prewarm-verify", action="store_true",
+                        help="流水线结束前自动预热 verify_cache.pkl，避免首次验稿等待")
+    parser.add_argument("--yes", "-y", action="store_true", help="跳过交互式规模确认提示")
+    parser.add_argument("--ask-size", action="store_true", help="主动交互询问目标产物大小（KB / 档位）")
     args = parser.parse_args()
 
     env = dict(os.environ)
@@ -62,6 +72,9 @@ def main():
         cfg = project.load(env.get("REFPACK_CONFIG"))
     except SystemExit:
         pass
+
+    # 交互终端未显式指定文件大小时，主动询问目标规模（KB / 档位）
+    budget.prompt_budget_interactive(args, cfg, force=args.ask_size)
 
     style_only = bool(args.style_only or cfg.get("style_only"))
 
@@ -82,6 +95,12 @@ def main():
         style_args.append("--anonymize")
     elif args.no_anonymize:
         style_args.append("--no-anonymize")
+    if args.anonymize_style:
+        style_args += ["--anonymize-style", args.anonymize_style]
+
+    pack_extra = ["--yes"]
+    if args.emit_both:
+        pack_extra.append("--emit-both")
 
     # 0 抽文本
     run_step("0 抽文本", "00_extract.py", *cfg_arg, env=env)
@@ -98,8 +117,11 @@ def main():
             print("\n=== 6 台词归属（已跳过：未配置 names/aliases，交由 07 自动识别说话人） ===", flush=True)
 
         run_step("7 文风索引", "07_stylefit_index.py", *cfg_arg, env=env)
-        run_step("8 生成纯文风例子集", "09_build_examples.py", *(cfg_arg + budget_args + style_args), env=env)
-        run_step("9 生成纯文风单文件包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args), env=env)
+        if args.emit_both:
+            run_step("8 生成双版本纯文风单文件包", "13_build_pack.py", *(cfg_arg + budget_args + style_args + pack_extra), env=env)
+        else:
+            run_step("8 生成纯文风例子集", "09_build_examples.py", *(cfg_arg + budget_args + style_args), env=env)
+            run_step("9 生成纯文风单文件包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args + pack_extra), env=env)
     else:
         # 2 一层摘要
         if not args.no_llm:
@@ -129,10 +151,13 @@ def main():
         run_step("9 生成整书总结", "10_build_summary.py", *(cfg_arg + budget_args), env=env)
 
         # 10 合并生成参考包
-        run_step("10 合并生成参考包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args), env=env)
+        run_step("10 合并生成参考包", "13_build_pack.py", *(["--no-rebuild"] + cfg_arg + budget_args + style_args + pack_extra), env=env)
+
+    if args.prewarm_verify:
+        run_step("预热验稿缓存（verify_cache.pkl）", "11_verify.py", *(["--prewarm"] + cfg_arg), env=env)
 
     # 产物概览
-    out_dir = cfg.get("paths", {}).get("out") or os.path.join(ROOT, "work", "out")
+    out_dir = os.path.normpath(cfg.get("paths", {}).get("out") or os.path.join(ROOT, "work", "out"))
     print("\n产物目录：%s" % out_dir)
     if os.path.isdir(out_dir):
         for f in sorted(os.listdir(out_dir)):

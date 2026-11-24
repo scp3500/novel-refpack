@@ -18,10 +18,11 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from lib import project      # noqa: E402
+from lib import project, textio      # noqa: E402
 
 
 def main():
+    textio.ensure_utf8_stdio()
     argv = sys.argv[1:]
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--config", default=None)
@@ -35,7 +36,11 @@ def main():
         raise SystemExit("没有索引：%s\n先跑 scripts/07_stylefit_index.py" % idx)
 
     cmd = [sys.executable, "-X", "utf8", os.path.join(ROOT, "stylefit", "query.py"),
-           "--index", idx] + rest
+           "--index", idx]
+    attrib = project.artifact(cfg, "attrib.json")
+    if os.path.isfile(attrib) and not any(x == "--attrib" or x.startswith("--attrib=") for x in rest):
+        cmd += ["--attrib", attrib]
+    cmd += rest
     sys.exit(subprocess.call(cmd))
 
 

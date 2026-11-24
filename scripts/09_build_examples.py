@@ -111,14 +111,15 @@ SELF_WORDS = ["我", "咱", "俺", "老子", "本大爷", "本人", "人家", "�
               "妾身", "本机", "老夫", "小女子"]
 
 
-def voice_profiles(pairs, top=24):
+def voice_profiles(pairs, top=24, self_words=None):
     by = defaultdict(list)
     for w, t in pairs:
         by[w].append(t)
+    sw = self_words or SELF_WORDS
     out = {}
     for who, ls in sorted(by.items(), key=lambda kv: -len(kv[1]))[:top]:
         base = len(ls)
-        self_cnt = {w: sum(t.count(w) for t in ls) for w in SELF_WORDS}
+        self_cnt = {w: sum(t.count(w) for t in ls) for w in sw}
         self_cnt = {w: n for w, n in self_cnt.items() if n > 0}
         tail = Counter()
         for t in ls:
@@ -207,20 +208,41 @@ TOPICS = [
 ]
 
 STYLE_ONLY_TOPICS = [
-    ("A · 动作交锋与冲突",
-     r"(挥剑|格挡|闪避|突刺|挥拳|拔剑|反手|后退|撞上|扑来|伤口|鲜血|倒地|兵器)"),
-    ("B · 环境氛围与悬疑张力",
-     r"(黑暗|阴影|夜色|月光|寂静|死寂|阴冷|风声|脚步声|压迫感|屏住呼吸|微弱的光)"),
-    ("C · 博弈推理与交涉",
-     r"(推理|线索|证据|破绽|判断|试探|筹码|条件|底牌|交易|沉默片刻|反问|算计)"),
-    ("D · 日常互动与轻松吐槽",
-     r"(吐槽|无语|翻了个白眼|干笑|苦笑|顺口|叹了口气|早饭|喝了一口|开什么玩笑)"),
+    ("A · 动作推进与肢体细节",
+     r"(转身|低头|抬起|伸手|握紧|推开|站起|停下|走过去|后退|加快脚步|拉住|放开|靠在)"),
+    ("B · 环境氛围与光影五感",
+     r"(阳光|夕阳|月光|灯光|阴影|夜色|寂静|微风|雨声|脚步声|空气|寒意|窗外|街灯)"),
+    ("C · 交涉对峙与试探",
+     r"(沉默片刻|反问|试探|条件|理由|解释|妥协|拒绝|打断|停顿|平静地|冷静)"),
+    ("D · 日常互动与轻快交流",
+     r"(苦笑|干笑|叹了口气|顺口|开玩笑|笑出声|咖啡|晚饭|茶|回家|路上|周末)"),
     ("E · 情绪起伏与内心转折",
-     r"(犹豫|迟疑|定了定神|皱起眉|心里一沉|松了口气|心跳|发紧|沉默|苦涩|自嘲)"),
+     r"(犹豫|迟疑|心想|觉得|心里|心跳|发紧|沉默|苦涩|自嘲|不安|松了口气|忍不住)"),
 ]
 
 
-def topic_digests(paras, topics=None, per=12, win=3):
+def _clip_around_match(text, rx, max_chars=0):
+    if not max_chars or len(text) <= max_chars:
+        return text
+    m = rx.search(text) if rx else None
+    center = m.start() if m else len(text) // 2
+    half = max_chars // 2
+    lo = max(0, center - half)
+    hi = min(len(text), lo + max_chars)
+    if hi - lo < max_chars:
+        lo = max(0, hi - max_chars)
+    if lo > 0:
+        b = text.find("。", lo)
+        if b != -1 and b < center:
+            lo = b + 1
+    if hi < len(text):
+        b = text.rfind("。", lo, hi)
+        if b != -1 and b > center:
+            hi = b + 1
+    return ("……" if lo > 0 else "") + text[lo:hi].strip() + ("……" if hi < len(text) else "")
+
+
+def topic_digests(paras, topics=None, per=12, win=3, max_chars=0):
     """按主题从原文抽大段片段，均匀铺到全书。"""
     out = []
     for title, pat in (topics or TOPICS):
@@ -229,6 +251,7 @@ def topic_digests(paras, topics=None, per=12, win=3):
         picked, seen = [], set()
         for i in stride_pick(hits, per):
             seg = "\n".join(paras[max(0, i - 1):i + win]).strip()
+            seg = _clip_around_match(seg, rx, max_chars=max_chars)
             key = seg[:60]
             if key in seen:
                 continue
@@ -243,15 +266,24 @@ def arc_base(t):
     return re.split(r"[（(【]", t)[0].strip()
 
 
+def load_craft_rules(cfg):
+    sf_dir = project.resolve_stylefit_dir(cfg)
+    p = os.path.join(sf_dir, "craft_rules.json")
+    if os.path.isfile(p):
+        return textio.read_json(p, {}) or {}
+    return {}
+
+
 def load_topics(cfg, style_only=False):
-    if style_only:
-        return STYLE_ONLY_TOPICS
-    p = os.path.join(ROOT, "config", "stylefit", "topics.json")
+    sf_dir = project.resolve_stylefit_dir(cfg)
+    p = os.path.join(sf_dir, "topics.json")
     if os.path.isfile(p):
         d = textio.read_json(p, {}) or {}
         items = [(k, v) for k, v in d.items() if not k.startswith("_") and isinstance(v, str)]
         if items:
             return items
+    if style_only:
+        return STYLE_ONLY_TOPICS
     return TOPICS
 
 
@@ -390,31 +422,53 @@ DIALOGUE_FUNC_BUCKETS = [
 ]
 
 
-def _classify_dialogue_func(line):
-    for name, pat in DIALOGUE_FUNC_BUCKETS:
+def _load_dialogue_buckets(cfg=None):
+    if cfg:
+        sf_dir = project.resolve_stylefit_dir(cfg)
+        p = os.path.join(sf_dir, "funcs.json")
+        if os.path.isfile(p):
+            d = textio.read_json(p, {}) or {}
+            items = [(k, v) for k, v in d.items() if not k.startswith("_") and isinstance(v, str)]
+            if items:
+                return items
+    return DIALOGUE_FUNC_BUCKETS
+
+
+def _classify_dialogue_func(line, buckets=None):
+    for name, pat in (buckets or DIALOGUE_FUNC_BUCKETS):
         if re.search(pat, line):
             return name
     return "陈述说明"
 
 
-def build_dialogue_style_buckets(X, pairs, per_bucket=10):
-    """纯文风模式：去角色绑定，按台词功能桶汇总全书代表句式、句长与句尾语气词。"""
+def build_dialogue_style_buckets(X, pairs, per_bucket=10, cfg=None, all_dialogues=None):
+    """纯文风模式：去角色绑定，按台词功能桶汇总全书代表句式、句长与句尾语气词。
+
+    优先使用 all_dialogues（全书全部对白引号，彻底解决裸对白归属覆盖率低的问题），
+    其次使用 pairs，最后回退 X["台词"]。
+    """
+    func_buckets = _load_dialogue_buckets(cfg)
     buckets = defaultdict(list)
-    # 优先从 pairs 全量归类以保留真实分布与句尾统计；pairs 为空时从 X["台词"] 回收样本
-    if pairs:
+    if all_dialogues:
+        for txt in all_dialogues:
+            t = (txt or "").strip()
+            if len(re.sub(r"\s", "", t)) >= 2:
+                buckets[_classify_dialogue_func(t, func_buckets)].append(t)
+    elif pairs:
         for _, txt in pairs:
             t = (txt or "").strip()
             if len(re.sub(r"\s", "", t)) >= 2:
-                buckets[_classify_dialogue_func(t)].append(t)
+                buckets[_classify_dialogue_func(t, func_buckets)].append(t)
     else:
+        known = {k for k, _ in func_buckets}
         for who_map in (X.get("台词") or {}).values():
             for func, info in (who_map or {}).items():
-                target = func if func in {k for k, _ in DIALOGUE_FUNC_BUCKETS} else "陈述说明"
+                target = func if func in known else "陈述说明"
                 for s in (info.get("样本") or []):
                     buckets[target].append(s)
 
     out = []
-    for func, _ in DIALOGUE_FUNC_BUCKETS:
+    for func, _ in func_buckets:
         ls = buckets.get(func) or []
         if not ls:
             continue
@@ -506,6 +560,7 @@ def _budget_trim_sections(header_lines, sections, binfo):
 
 
 def main():
+    textio.ensure_utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--out", default=None)
@@ -515,6 +570,8 @@ def main():
                     help="对摘录中的人名与【条目框】做中性代称脱敏")
     ap.add_argument("--no-anonymize", action="store_true",
                     help="强制关闭脱敏（即使在 --style-only 下）")
+    ap.add_argument("--anonymize-style", choices=["neutral", "names"], default=None,
+                    help="脱敏代称风格：neutral（某甲/某乙）或 names（林远/苏晴/陈默）")
     budget.add_budget_args(ap)
     a = ap.parse_args()
 
@@ -526,6 +583,7 @@ def main():
         anonymize = True
     else:
         anonymize = False
+    anon_style = a.anonymize_style or cfg.get("anonymize_style") or "neutral"
 
     binfo = budget.resolve_budget(
         cfg,
@@ -546,6 +604,7 @@ def main():
     raw, _ = C.load_corpus(cfg["paths"]["chunks"])
     paras = C.paragraphs(raw)
     narr = C.narr_sentences(paras)
+    all_dialogues = C.extract_dialogue_quotes(paras, min_len=2) if style_only else None
 
     if anonymize:
         extra_speakers = list((X.get("台词") or {}).keys())
@@ -554,6 +613,10 @@ def main():
             aliases=cfg.get("aliases"),
             extra_terms=extra_speakers,
             strip_brackets=True,
+            anonymize_terms=cfg.get("anonymize_terms"),
+            single_char_names=cfg.get("single_char_names"),
+            style=anon_style,
+            collapse_adjacent=True,
         )
     else:
         clean_fn, role_map = (lambda s: s), {}
@@ -565,21 +628,33 @@ def main():
         body = "\n".join(lines_list).strip()
         sections.append((header, body, weight, keep_tail))
 
+    craft_rules = load_craft_rules(cfg)
+    self_words = craft_rules.get("self_words") or SELF_WORDS
+
     # ── 一 文风速览 ──
     st = X.get("统计", {})
     s1 = [
         "- 语料规模：%s" % (X.get("meta", {}).get("chars", "?")),
-        "- 台词均长：%s ｜ 中位：%s ｜ ≤19 字占比：%s" % (
-            st.get("台词均长"), st.get("台词中位长度"), st.get("台词≤19字占比")),
+        "- 台词均长：%s ｜ 中位：%s ｜ ≤19 字占比：%s（统计来源：%s）" % (
+            st.get("台词均长"), st.get("台词中位长度"), st.get("台词≤19字占比"),
+            st.get("台词统计来源") or "归属台词"),
         "- 每千字标点：%s" % st.get("每千字标点"),
         "- 叙述句数：%s" % st.get("叙述句数"),
     ]
+    if st.get("POV分桶"):
+        pov_parts = []
+        for pk, pv in st["POV分桶"].items():
+            pov_parts.append("%s %d段(%.0f%%，均长%.1f，对白%.0f%%)" % (
+                pk, pv.get("段数", 0), pv.get("占比", 0) * 100, pv.get("均段长", 0), pv.get("对白占比", 0) * 100))
+        if pov_parts:
+            s1.append("- POV 视角分桶：%s" % " ｜ ".join(pov_parts))
     if not style_only:
         s1.append("- 台词量前 12 人：%s" % st.get("说话人台词量"))
     if anonymize and role_map:
-        s1.append("- 脱敏说明：摘录中的原书人名已统一映射为中性代称（某甲/某乙……），【条目框】已替换为「某技能/条目」。")
+        style_desc = "自然中性人名（林远/苏晴……）" if anon_style == "names" else "中性代称（某甲/某乙……）"
+        s1.append("- 脱敏说明：摘录中的原书人名已统一映射为%s，【条目框】已替换为「某技能/条目」。" % style_desc)
     s1.append("")
-    s1.append("> 对标时必须按同类场景切区间，不能拿全书硬套（详见 docs/PITFALLS.md）。")
+    s1.append(craft_rules.get("benchmark_note") or "> 对标时必须按同类场景切区间，不能拿全书硬套（详见 docs/PITFALLS.md）。")
     add_sec("## 一 · 文风速览（统计靶）", s1, 3.0)
 
     # ── 二 叙述腔 ──
@@ -601,17 +676,18 @@ def main():
     # ── 三 内心独白 ──
     inner_k = max(8, int(round(24 * scale)))
     one_k = max(12, int(round(36 * scale)))
-    inner = [s for s in narr if re.search(r"(心想|心里想|觉得|暗自|不禁|寻思|盘算|默念|吐槽)", s)]
-    one = [p.strip() for p in paras if 4 <= len(p.strip()) <= 26 and not C.QUOTE.search(p)]
+    inner_pat = craft_rules.get("inner_words") or r"(心想|心里想|觉得|暗自|不禁|寻思|盘算|默念|吐槽)"
+    inner = [s for s in narr if re.search(inner_pat, s)]
+    one = [p.strip() for p in paras if 4 <= len(p.strip()) <= 26 and not C.iter_quotes(p)]
     s3 = []
     for s in dedup_stride_pick(inner, inner_k, head_n=4):
         s3.append("- %s" % clean_fn(s))
     s3.append("")
-    s3.append("**单句成段短句（原文里独立一行，带吐槽 / 自嘲味）：**")
+    s3.append(craft_rules.get("one_line_label") or "**单句成段短句（原文里独立一行，带吐槽 / 自嘲味）：**")
     s3.append("")
     for s in dedup_stride_pick(one, one_k, head_n=4):
         s3.append("- %s" % clean_fn(s))
-    add_sec("## 三 · 内心独白 / 吐槽（混在叙述里，不带引号的那种）", s3, 2.2)
+    add_sec(craft_rules.get("inner_heading") or "## 三 · 内心独白 / 吐槽（混在叙述里，不带引号的那种）", s3, 2.2)
 
     # ── 三B 细粒度笔法与镜头细节 ──
     craft_k = max(5, int(round(12 * scale)))
@@ -638,7 +714,7 @@ def main():
     add_sec("## 四 · 细粒度笔法与镜头细节（连续动作 / 五感环境 / 神态锚点 / 转场留白）", s_craft, 4.0)
 
     # ── 四 对白回合 ──
-    dlg_per = max(3, int(round(6 * scale)))
+    dlg_per = max(2, int(round(int(craft_rules.get("dlg_samples_base") or 6) * scale)))
     s4 = []
     for sc, d in (X.get("场景") or {}).items():
         if style_only and sc in ("游戏面板", "死亡复活"):
@@ -656,19 +732,47 @@ def main():
     if style_only:
         bucket_per = max(5, int(round(10 * scale)))
         s5 = [
-            "> 已开启纯文风模式：剥离原书人物绑定，按话语功能汇总全书对白句式、节奏与高频句尾语气词。",
+            "> 已开启纯文风模式：基于全书全部对白引号按话语功能汇总句式、节奏与高频句尾语气词（不再受限于归属覆盖率）。",
             "",
         ]
-        for binfo_row in build_dialogue_style_buckets(X, pairs, per_bucket=bucket_per):
+        for binfo_row in build_dialogue_style_buckets(
+            X, pairs, per_bucket=bucket_per, cfg=cfg, all_dialogues=all_dialogues
+        ):
             tail_str = " ｜ ".join(binfo_row["tails"]) if binfo_row["tails"] else "—"
             s5.append("### %s（%d 条 ｜ 均长 %.1f 字 ｜ 中位 %d 字 ｜ 高频句尾：%s）" % (
                 binfo_row["func"], binfo_row["n"], binfo_row["avg_len"], binfo_row["med_len"], tail_str))
             for s in binfo_row["samples"]:
                 s5.append("- %s" % clean_fn(s))
             s5.append("")
-        add_sec("## 六 · 语体与台词功能范例（去角色绑定）", s5, 3.0)
+        add_sec("## 六 · 语体与台词功能范例", s5, 3.0)
+
+        if not anonymize and pairs:
+            masks = voice_profiles(pairs, top=12, self_words=self_words)
+            addrs = address_table(pairs, names)
+            s5b = [
+                "> 保留原书人名对照：展示主要说话人的句长、自称、句尾口癖与典型台词。",
+                "",
+            ]
+            sp_samples = max(2, min(4, int(round(3 * scale))))
+            for who, d in masks.items():
+                s5b.append("### %s" % who)
+                s5b.append("- 台词 %d 条 ｜ 均长 %.1f ｜ 问号率 %.0f%% ｜ 感叹率 %.0f%%" % (
+                    d["n"], d["均长"], d["问号率"] * 100, d["感叹率"] * 100))
+                if d["自称"]:
+                    s5b.append("- 自称：%s" % " ｜ ".join("%s %d" % x for x in d["自称"]))
+                if addrs.get(who):
+                    s5b.append("- 谁常提他：%s" % " ｜ ".join("%s %d" % x for x in addrs[who]))
+                if d["口癖"]:
+                    s5b.append("- 句尾口癖：%s" % " ｜ ".join("%s %d" % x for x in d["口癖"]))
+                bs = (X.get("台词") or {}).get(who) or {}
+                for func, b in list(bs.items())[:3]:
+                    s5b.append("- **%s**（%d 条，中位 %d 字）" % (func, b["n"], b["中位长度"]))
+                    for s in b["样本"][:sp_samples]:
+                        s5b.append("  - %s" % s)
+                s5b.append("")
+            add_sec("## 六B · 主要人物语音档案（保留原名对照）", s5b, 2.4)
     else:
-        masks = voice_profiles(pairs)
+        masks = voice_profiles(pairs, self_words=self_words)
         addrs = address_table(pairs, names)
         sample_per_func = max(4, int(round(8 * scale)))
         s5 = []
@@ -693,9 +797,10 @@ def main():
     # ── 六 亲密 / 感情场景写法 ──
     s6 = []
     d = (X.get("场景") or {}).get("亲密")
+    intimate_base = int(craft_rules.get("intimate_samples_base") or 4)
     if d:
         s6.append("原文片段（%d 段）：" % d["n"])
-        for s in stride_pick(d.get("样本", []), max(2, int(round(4 * scale)))):
+        for s in stride_pick(d.get("样本", []), max(2, int(round(intimate_base * scale)))):
             s6.append("```")
             s6.append(clean_fn(s.strip()))
             s6.append("```")
@@ -709,7 +814,7 @@ def main():
         s6.append("- **%s**：%s" % (k, " ｜ ".join("%s %d" % x for x in hot)))
         if dead:
             s6.append("  - 禁用：%s" % "、".join(dead))
-    add_sec("## 七 · 亲密与感情场景写法", s6, 1.8)
+    add_sec("## 七 · 亲密与感情场景写法", s6, float(craft_rules.get("intimate_weight") or 1.8))
 
     # ── 七 名场面（仅同人/IF 模式）──
     if not style_only:
@@ -768,12 +873,36 @@ def main():
     s10.append("、".join(z) if z else "（空）")
     add_sec("## 十一 · 搭配表 · 典型 vs 雷区", s10, 2.8, keep_tail=True)
 
-    # ── 十一 用词表 ──
+    # ── 十一 用词表与本书高频特征词（供写作模型参考目标书真实高频词）──
     s11 = []
     for c, dd in (X.get("用词") or {}).items():
         s11.append("- **%s**：%s" % (c, " ｜ ".join(
             "%s %d%s" % (w, n, "【禁用】" if n == 0 else "") for w, n in dd.items())))
-    add_sec("## 十二 · 用词表与场景高频词", s11, 1.8)
+    raw_top_words = X.get("高频词") or []
+    if not raw_top_words and paras:
+        exclude_tw = set(names) | set((X.get("台词") or {}).keys())
+        for alts in (cfg.get("aliases") or {}).values():
+            exclude_tw.update(alts or ())
+        exclude_tw.update((cfg.get("anonymize_terms") or {}).keys())
+        raw_top_words = [{"词": w, "次数": c} for w, c in C.extract_top_words(paras, top_k=60, exclude_terms=exclude_tw)]
+    if raw_top_words:
+        ex_leak = set(role_map.keys()) if anonymize else set()
+        shown_tw = []
+        for item in raw_top_words:
+            w = item.get("词", "")
+            c_cnt = item.get("次数", 0)
+            if not w or (anonymize and (w in ex_leak or clean_fn(w) != w)):
+                continue
+            shown_tw.append("%s %d" % (w, c_cnt))
+            if len(shown_tw) >= 50:
+                break
+        if shown_tw:
+            s11.append("")
+            s11.append("### 本书高频特征词（写作模型词汇对齐参考）")
+            s11.append("> 以下为原书语料自动统计的高频实词与习语（已过滤停用词与角色专名），行文选词优先靠拢这套语域：")
+            for idx_tw in range(0, len(shown_tw), 10):
+                s11.append("- " + " ｜ ".join(shown_tw[idx_tw:idx_tw + 10]))
+    add_sec("## 十二 · 用词表与本书高频特征词", s11, 2.2)
 
     # ── 十二 章节标题样例（仅同人/IF 模式）──
     if not style_only:
@@ -790,9 +919,11 @@ def main():
         add_sec("## 十三 · 章节标题样例（写番外 / IF 时沿用这套句式）", s12, 0.5)
 
     # ── 十三 专项摘录 ──
-    topic_per = max(4, int(round(8 * scale)))
+    topic_per = max(2, int(round(int(craft_rules.get("topic_samples_base") or 8) * scale)))
+    topic_win = int(craft_rules.get("topic_win") or 3)
+    topic_max_chars = int(craft_rules.get("topic_max_excerpt_chars") or 0)
     s13 = []
-    for title, segs in topic_digests(paras, topics=load_topics(cfg, style_only=style_only), per=topic_per):
+    for title, segs in topic_digests(paras, topics=load_topics(cfg, style_only=style_only), per=topic_per, win=topic_win, max_chars=topic_max_chars):
         s13.append("### %s" % title)
         s13.append("")
         for s in segs:
@@ -800,7 +931,7 @@ def main():
             s13.append(clean_fn(s))
             s13.append("```")
         s13.append("")
-    add_sec("## 十四 · 专项摘录（按主题的大段原文，写同类场景前先扫一遍）", s13, 1.8)
+    add_sec("## 十四 · 专项摘录（按主题的大段原文，写同类场景前先扫一遍）", s13, float(craft_rules.get("topics_weight") or 1.8))
 
     # ── 十四 分剧本语料（仅同人/IF 模式）──
     arcs = []
@@ -829,7 +960,7 @@ def main():
     if bp:
         bans = textio.read_text(bp).strip()
     s15 = [
-        "> 定稿前扫一遍。这一节拦的是模型最容易犯的错：照抄开篇特殊写法、写本书没有的设定、把分期角色写死。",
+        craft_rules.get("bans_note") or "> 定稿前扫一遍。这一节拦的是模型最容易犯的错：照抄开篇特殊写法、写本书没有的设定、把分期角色写死。",
         "",
         bans if bans else "<!-- 在 config/bans.md 里写本书的硬禁区。 -->",
     ]
@@ -841,10 +972,11 @@ def main():
     mode_tags.append("已脱敏" if anonymize else "原名保留")
     mode_str = " · ".join(mode_tags)
 
-    book_label = "通用文风样本" if style_only else (cfg.get("name") or "")
+    book_label = "通用文风样本" if (style_only and anonymize) else (cfg.get("name") or "")
     header_placeholder = [
         "# %s · 典型例子集" % book_label,
         "> 容量统计：__STATS_BANNER__",
+        "> **防照抄护栏**：严禁直接复用、拼接或仅替换主语地照抄本包例句；仅学习句长分布、标点节奏、实词搭配、本书高频特征词与心理转折方式。",
         "（文风语料 ｜ 全部摘自原文 ｜ 供仿写与提示词取用）",
         "",
         "配套：`整书总结.md`（设定/剧情/状态/IF）。本文只负责文风与语感。"

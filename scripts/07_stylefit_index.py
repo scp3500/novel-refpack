@@ -16,10 +16,11 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from lib import project      # noqa: E402
+from lib import project, textio      # noqa: E402
 
 
 def main():
+    textio.ensure_utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--no-attrib", action="store_true")
@@ -35,11 +36,19 @@ def main():
     attrib = project.artifact(cfg, "attrib.json")
     if a.no_attrib or not os.path.isfile(attrib):
         attrib = ""
-    names = ",".join(cfg.get("names") or [])
+    all_names = list(cfg.get("names") or [])
+    for canon, alts in (cfg.get("aliases") or {}).items():
+        if canon and canon not in all_names:
+            all_names.append(canon)
+        for a_name in (alts or ()):
+            if a_name and a_name not in all_names:
+                all_names.append(a_name)
+    names = ",".join(all_names)
 
+    stylefit_dir = project.resolve_stylefit_dir(cfg)
     cmd = [sys.executable, "-X", "utf8", os.path.join(ROOT, "stylefit", "build_index.py"),
            "--corpus", corpus, "--out", out, "--names", names,
-           "--config", os.path.join(ROOT, "config", "stylefit")]
+           "--config", stylefit_dir]
     if attrib:
         cmd += ["--attrib", attrib]
     if a.extra:

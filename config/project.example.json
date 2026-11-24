@@ -14,11 +14,23 @@
     "主角": ["主角昵称"]
   },
 
+  "stylefit_dir": "general",
+  "_stylefit_dir说明": "文风规则目录或内置预设名：general（通用文学，零奇幻偏置）/ modern（现代都市校园恋爱）/ fantasy（奇幻异世界系统）/ tieba（贴吧群聊），也可填自定义目录路径（默认 config/stylefit）",
+
   "bans_file": "config/bans.md",
   "drop_headings": ["简介", "制作信息", "封面及彩页"],
+  "drop_builtin_meta": true,
+  "drop_file_patterns": [],
+  "drop_text_patterns": [],
+  "drop_line_patterns": [],
+  "_drop说明": "drop_builtin_meta 自动过滤 EPUB 版权/奥付/问卷/目次/后记等非正文页；drop_file_patterns / drop_text_patterns / drop_line_patterns 可按正则补充过滤文件、页首或噪声行",
 
   "style_only": false,
   "anonymize": false,
+  "anonymize_style": "neutral",
+  "anonymize_terms": {},
+  "single_char_names": [],
+  "_anonymize说明": "anonymize_style 可选 neutral（某甲/某乙）或 names（林远/苏晴/陈默等自然假名）；anonymize_terms 填 {\"原书地名/学校\": \"某地\"} 做专名脱敏；single_char_names 填单字人名（如 [\"朋\", \"梓\"]）启用安全上下文脱敏",
 
   "budget": {
     "preset": "standard",

@@ -20,7 +20,7 @@ from collections import defaultdict, Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from lib import corpus as C          # noqa: E402
+from lib import corpus as C, textio          # noqa: E402
 
 CFG = os.path.join(ROOT, "config", "stylefit")
 
@@ -104,6 +104,7 @@ def stride_pick(items, k):
 
 
 def main():
+    textio.ensure_utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--out", required=True)
@@ -123,11 +124,23 @@ def main():
     funcs = load_funcs(a.config)
     print("语料 %d 个文件 ｜ %d 字 ｜ %d 段" % (len(files), len(B), len(paras)))
 
+    sv = C.detect_script_variant(raw)
+    if sv["variant"] == "traditional":
+        print(
+            "[警告] 检测到语料以繁体中文为主（繁体字占比 %.1f%%，繁 %d / 简 %d），"
+            "而默认 config/stylefit/*.json 词典为简体，搭配表/用词表/零频黑名单可能出现大量 0 命中！"
+            "建议先将语料转为简体，或配置繁体版 stylefit_dir。" % (
+                sv["trad_ratio"] * 100.0, sv["trad"], sv["simp"]
+            ),
+            file=sys.stderr,
+        )
+
     # ── 归属 ──
+    known_names = [x.strip() for x in a.names.split(",") if x.strip()]
     pairs = C.load_attribution(a.attrib)
     src = "归属文件"
     if not pairs:
-        names = [x.strip() for x in a.names.split(",") if x.strip()]
+        names = list(known_names)
         if not names:
             names = [n for n, _ in Counter(
                 m for m in re.findall(r"([\u4e00-\u9fff]{2,4})(?=[^。！？\n]{0,8}" + C.VERB + r")", raw)
@@ -138,9 +151,10 @@ def main():
 
     narr = C.narr_sentences(paras)
     IDX = {"meta": {"corpus": a.corpus, "chars": len(B), "paras": len(paras),
-                    "files": len(files), "attrib": src, "pairs": len(pairs)},
-           "台词": {}, "描写": {}, "笔法细节": {}, "搭配": {}, "用词": {}, "零频词": [], "场景": {},
-           "场景词典": {}, "统计": {}}
+                    "files": len(files), "attrib": src, "pairs": len(pairs),
+                    "script_variant": sv["variant"]},
+           "台词": {}, "描写": {}, "笔法细节": {}, "搭配": {}, "用词": {}, "高频词": [],
+           "零频词": [], "场景": {}, "场景词典": {}, "统计": {}}
 
     # ── 1 人物 × 功能 ──
     by = defaultdict(list)
@@ -230,17 +244,27 @@ def main():
         IDX["描写"][name] = {"n": total_hits, "样本": stride_pick(deduped, 24)}
 
     # ── 2b 笔法细节 ──
+    craft_rules = {}
+    cr_file = os.path.join(a.config, "craft_rules.json")
+    if os.path.isfile(cr_file):
+        craft_rules = json.load(open(cr_file, encoding="utf-8"))
+
     has_quote_re = re.compile("[" + "".join(re.escape(c) for c in C.QUOTE_OPEN + C.QUOTE_CLOSE) + "]")
     action_words_re = re.compile(
-        r"(?:伸手|伸出|拿|拉|推|走|看|转身|低头|抬起|放下|握|按|推开|坐下|起身|站起|迈步|扣|抓|递|接过|抬眼|抬手|点头|摇头)"
+        craft_rules.get("action_words")
+        or r"(?:伸手|伸出|拿|拉|推|走|看|转身|低头|抬起|放下|握|按|推开|坐下|起身|站起|迈步|扣|抓|递|接过|抬眼|抬手|点头|摇头)"
     )
     sensory_re = re.compile(
-        r"(?:阳光|月光|灯光|阴影|夜色|光线|昏暗|微风|风声|雨声|脚步声|敲门声|响起|传来|冰凉|滚烫|温热|粗糙|刺骨|窗外|街上|角落|空气|气味|寂静|回荡)"
+        craft_rules.get("sensory")
+        or r"(?:阳光|月光|灯光|阴影|夜色|光线|昏暗|微风|风声|雨声|脚步声|敲门声|响起|传来|冰凉|滚烫|温热|粗糙|刺骨|窗外|街上|角落|空气|气味|寂静|回荡)"
     )
     transition_re = re.compile(
-        r"^(?:片刻之后|没过多久|很快|过了许久|半晌|第二天|次日|夜幕降临|天色渐暗|黄昏|清晨|傍晚|半小时后|等到|回到|离开|走进|来到)"
-        r"|(?:片刻之后|没过多久|第二天|夜幕降临|半小时后|等到.{2,10}的时候)"
+        craft_rules.get("transition")
+        or (r"^(?:片刻之后|没过多久|很快|过了许久|半晌|第二天|次日|夜幕降临|天色渐暗|黄昏|清晨|傍晚|半小时后|等到|回到|离开|走进|来到)"
+            r"|(?:片刻之后|没过多久|第二天|夜幕降临|半小时后|等到.{2,10}的时候)")
     )
+
+    craft_k = int(craft_rules.get("craft_max_samples") or 25)
 
     def _dedup_stride_25(items):
         seen_h, out = set(), []
@@ -251,7 +275,7 @@ def main():
                 continue
             seen_h.add(key)
             out.append(it)
-        return stride_pick(out, 25)
+        return stride_pick(out, craft_k)
 
     craft_action, craft_sensory, craft_trans, craft_dlg_act, craft_short = [], [], [], [], []
     # 检测章节首段：原始文本中章节标题行后的首个非空正文段
@@ -265,7 +289,7 @@ def main():
         if st.startswith("#") or C.CHAP.match(st):
             expect_first = True
             continue
-        if re.fullmatch(r"[-—=*~·\s　]{3,}", st):
+        if C.is_divider(st):
             continue
         if expect_first:
             chapter_first_paras.add(st)
@@ -273,7 +297,8 @@ def main():
 
     for p in paras:
         plen = len(p)
-        has_q = bool(has_quote_re.search(p))
+        qms = C.iter_quotes(p)
+        has_q = bool(qms) or bool(has_quote_re.search(p))
         if not has_q:
             comma_cnt = p.count("，")
             if 35 <= plen <= 140 and 2 <= comma_cnt <= 4 and len(action_words_re.findall(p)) >= 2:
@@ -285,8 +310,8 @@ def main():
             if 8 <= plen <= 28:
                 craft_short.append(p)
         else:
-            if 40 <= plen <= 160 and C.QUOTE.search(p):
-                narr_rest = re.sub(r"\s", "", C.QUOTE.sub("", p))
+            if 40 <= plen <= 160 and qms:
+                narr_rest = re.sub(r"\s", "", C.strip_dialogue_quotes(p, keep_inline_text=False))
                 if len(narr_rest) >= 14:
                     craft_dlg_act.append(p)
 
@@ -341,37 +366,107 @@ def main():
     for i, p in enumerate(paras):
         s = scene_of(p, scene_rules)
         bs[s].append(i)
+    scene_max_samples = int(craft_rules.get("scene_max_samples") or 18)
+    scene_win_before = int(craft_rules.get("scene_win_before") if craft_rules.get("scene_win_before") is not None else 3)
+    scene_win_after = int(craft_rules.get("scene_win_after") if craft_rules.get("scene_win_after") is not None else 5)
+    scene_max_chars = int(craft_rules.get("scene_max_excerpt_chars") or 0)
+    rule_map = dict(scene_rules or [])
+
+    def _clip_scene(txt, sname):
+        if not scene_max_chars or len(txt) <= scene_max_chars:
+            return txt
+        pat = rule_map.get(sname)
+        m = re.search(pat, txt) if pat else None
+        center = m.start() if m else len(txt) // 2
+        half = scene_max_chars // 2
+        lo = max(0, center - half)
+        hi = min(len(txt), lo + scene_max_chars)
+        if hi - lo < scene_max_chars:
+            lo = max(0, hi - scene_max_chars)
+        if lo > 0:
+            b = txt.find("。", lo)
+            if b != -1 and b < center:
+                lo = b + 1
+        if hi < len(txt):
+            b = txt.rfind("。", lo, hi)
+            if b != -1 and b > center:
+                hi = b + 1
+        return ("……" if lo > 0 else "") + txt[lo:hi].strip() + ("……" if hi < len(txt) else "")
+
     IDX["场景"] = {}
     for s, idxs in bs.items():
         non_overlap = []
         for idx in idxs:
             if not non_overlap or idx - non_overlap[-1] >= 6:
                 non_overlap.append(idx)
-        picks = stride_pick(non_overlap, 18)
+        picks = stride_pick(non_overlap, scene_max_samples)
         IDX["场景"][s] = {
             "n": len(idxs),
-            "样本": ["\n".join(paras[max(0, idx - 3):idx + 5]) for idx in picks],
+            "样本": [_clip_scene("\n".join(paras[max(0, idx - scene_win_before):idx + scene_win_after]), s) for idx in picks],
         }
 
-    # ── 6 统计靶 ──
-    L = [t for _, t in pairs if len(re.sub(r"\s", "", t)) >= 2]
+    # ── 4b 本书高频特征词（供写作模型直接参考目标书高频用词）──
+    exclude_for_top = set(known_names) | set(IDX["台词"].keys())
+    IDX["高频词"] = [
+        {"词": w, "次数": c}
+        for w, c in C.extract_top_words(paras, top_k=80, exclude_terms=exclude_for_top, min_count=4)
+    ]
+
+    # ── 6 统计靶（全书对白优先，不再受限于低覆盖率归属）──
+    all_dlg = C.extract_dialogue_quotes(paras, min_len=2)
+    attrib_L = [t for _, t in pairs if len(re.sub(r"\s", "", t)) >= 2]
+    use_all_dlg = bool(all_dlg) and (len(attrib_L) < len(all_dlg) * 0.30 or not attrib_L)
+    L = all_dlg if use_all_dlg else attrib_L
     lens = sorted(len(x) for x in L)
+
+    # POV 分桶统计（第一人称 vs 第三人称）
+    pov_groups = {"第一人称": [], "第三人称": []}
+    for p in paras:
+        pv = C.detect_para_pov(p)
+        if pv == "first":
+            pov_groups["第一人称"].append(p)
+        elif pv == "third":
+            pov_groups["第三人称"].append(p)
+    pov_stats = {}
+    for pname, plist in pov_groups.items():
+        if len(plist) < 10:
+            continue
+        p_raw = "\n".join(plist)
+        p_cjk = len(re.sub(r"[^\u4e00-\u9fff]", "", p_raw))
+        p_compact = re.sub(r"\s", "", p_raw)
+        p_dlgs = C.extract_dialogue_quotes(plist, min_len=2)
+        dlg_chars = sum(len(re.sub(r"\s", "", x)) + 2 for x in p_dlgs)
+        pov_stats[pname] = {
+            "段数": len(plist),
+            "占比": round(len(plist) / max(1, len(paras)), 3),
+            "均段长": round(len(p_compact) / max(1, len(plist)), 1),
+            "对白占比": round(dlg_chars / max(1, len(p_compact)), 3),
+            "每千字标点": {
+                pm: round(p_compact.count(pm) / max(1, p_cjk) * 1000, 2)
+                for pm in ["！", "？", "…", "——"]
+            },
+        }
+
     IDX["统计"] = {
         "台词均长": round(sum(lens) / max(1, len(lens)), 1),
         "台词中位长度": lens[len(lens) // 2] if lens else 0,
         "台词≤19字占比": round(sum(1 for x in lens if x <= 19) / max(1, len(lens)), 3),
+        "全书台词数": len(all_dlg),
+        "归属台词数": len(attrib_L),
+        "台词统计来源": "全书引号对白" if use_all_dlg else "归属台词",
         "每千字标点": {p: round(BR.count(p) / max(1, len(B)) * 1000, 2)
                    for p in ["！", "？", "…", "——", "，", "。"]},
         "说话人台词量": {w: c for w, c in Counter(w for w, _ in pairs).most_common(12)},
         "叙述句数": len(narr),
+        "POV分桶": pov_stats,
     }
 
     out = os.path.join(a.out, "index.json")
     json.dump(IDX, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print("索引写入 %s" % out)
-    print("人物 %d ｜ 功能桶 %d ｜ 描写意图 %d ｜ 搭配概念 %d ｜ 场景 %d ｜ 场景词典 %d ｜ 零频词 %d" % (
+    print("人物 %d ｜ 功能桶 %d ｜ 描写意图 %d ｜ 搭配概念 %d ｜ 高频词 %d ｜ 场景 %d ｜ 场景词典 %d ｜ 零频词 %d" % (
         len(IDX["台词"]), sum(len(v) for v in IDX["台词"].values()), len(IDX["描写"]),
-        len(IDX["搭配"]), len(IDX["场景"]), len(IDX["场景词典"]), len(IDX["零频词"])))
+        len(IDX["搭配"]), len(IDX["高频词"]), len(IDX["场景"]), len(IDX["场景词典"]), len(IDX["零频词"])))
     if IDX["零频词"]:
         print("零频词（全书 0 次，禁用）：",
               "、".join(IDX["零频词"][:40]) + ("..." if len(IDX["零频词"]) > 40 else ""))

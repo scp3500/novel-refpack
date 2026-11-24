@@ -7,6 +7,7 @@
   1 个中文字符 ≈ 0.68 tokens，ASCII 字符 ≈ 0.28 tokens。
 """
 import re
+import sys
 
 CJK_RE = re.compile(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]")
 
@@ -278,3 +279,87 @@ def format_stats_banner(full_text, example_text="", summary_text="", budget_info
     elif budget_info and budget_info.get("unlimited"):
         parts.append("档位 full (无损全量)")
     return " ｜ ".join(parts)
+
+
+def parse_size_choice(answer):
+    """解析用户输入的规模选择，返回 (preset_or_None, kb_or_None)。
+
+    支持：
+    - 空回车 -> ("standard", None)
+    - "1"/"compact" -> ("compact", None)
+    - "2"/"standard" -> ("standard", None)
+    - "3"/"rich" -> ("rich", None)
+    - "4"/"full"/"0" -> ("full", None)
+    - 数字或 "<数字>KB"（如 "120" / "80kb"） -> (None, 120.0)
+    """
+    raw = (answer or "").strip().lower()
+    if not raw:
+        return "standard", None
+    alias = {
+        "1": "compact", "compact": "compact", "精简": "compact",
+        "2": "standard", "standard": "standard", "标准": "standard",
+        "3": "rich", "rich": "rich", "丰富": "rich",
+        "4": "full", "full": "full", "全量": "full", "不限": "full",
+    }
+    if raw in alias:
+        return alias[raw], None
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:kb|k)?", raw)
+    if m:
+        val = float(m.group(1))
+        if val <= 0:
+            return "full", None
+        return None, val
+    return "standard", None
+
+
+def prompt_budget_interactive(args, cfg=None, force=False, input_fn=None):
+    """在交互终端中未显式指定预算规模时，主动询问用户期望的目标文件大小（KB / 档位）。
+
+    - 非交互（管道 / CI / 单元测试）或传入 --yes / 已有 --preset / --kb / --max-tokens 时自动跳过。
+    - 传入 force=True（如 --ask-size）或提供 input_fn 时强制交互。
+    返回 (preset, kb) 并同步写回 args.preset / args.kb。
+    """
+    has_cli_budget = (
+        getattr(args, "preset", None) is not None
+        or getattr(args, "kb", None) is not None
+        or getattr(args, "max_tokens", None) is not None
+    )
+    if has_cli_budget and not force:
+        return getattr(args, "preset", None), getattr(args, "kb", None)
+    if getattr(args, "yes", False) and not force:
+        return getattr(args, "preset", None), getattr(args, "kb", None)
+
+    bcfg = (cfg or {}).get("budget") or {}
+    if not force and (bcfg.get("target_kb") is not None or bcfg.get("max_tokens") is not None):
+        return getattr(args, "preset", None), getattr(args, "kb", None)
+
+    is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    if not force and not is_tty and input_fn is None:
+        return getattr(args, "preset", None), getattr(args, "kb", None)
+
+    reader = input_fn or input
+    default_preset = bcfg.get("preset") or "standard"
+    print("\n请确认期望的参考包文件大小 / 规模（直接回车使用默认 %s）：" % default_preset)
+    print("  [1] compact  (~60 KB  ｜ ~1.6 万 tokens，适合 32k 窗口)")
+    print("  [2] standard (~150 KB ｜ ~4.0 万 tokens，默认甜点)")
+    print("  [3] rich     (~300 KB ｜ ~8.0 万 tokens，长窗口深度创作)")
+    print("  [4] full     (全量无损，不做容量裁剪)")
+    print("  或直接输入具体数字（如 100 或 120KB 表示自定义目标大小）：")
+    try:
+        ans = reader("目标规模 [1/2/3/4 或自定义 KB]: ")
+    except (EOFError, KeyboardInterrupt):
+        return getattr(args, "preset", None), getattr(args, "kb", None)
+
+    if not (ans or "").strip():
+        chosen_preset, chosen_kb = default_preset, None
+    else:
+        chosen_preset, chosen_kb = parse_size_choice(ans)
+
+    if chosen_kb is not None:
+        args.kb = chosen_kb
+        args.preset = None
+        print("→ 已设定目标大小：%.1f KB" % chosen_kb)
+    else:
+        args.preset = chosen_preset
+        print("→ 已设定容量档位：%s" % chosen_preset)
+    return args.preset, args.kb
