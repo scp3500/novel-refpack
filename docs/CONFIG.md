@@ -1,6 +1,6 @@
 # 配置说明
 
-项目通过 `config/` 目录管理小说流水线参数（`project.json`）、群聊/贴吧蒸馏参数（`chat.json`）、文风统计词典（`stylefit/*.json`）与提示词模板（`prompts/*.txt`）。
+项目通过 `config/` 目录管理小说流水线参数（`project.json`）、群聊/贴吧蒸馏参数（`chat.json`）、分题材文风统计预设（`stylefit_general/`、`stylefit_modern/`、`stylefit_fantasy/`、`stylefit_tieba/`、`stylefit/`）与提示词模板（`prompts/*.txt`）。
 
 ---
 
@@ -18,19 +18,30 @@ cp config/project.example.json config/project.json
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `name` | string | 必填 | 书名或项目代号，用作缓存目录与产物主标题 |
-| `source` | string | 必填 | 语料文件路径，支持 `.epub`、`.docx`、`.txt` |
+| `source` | string | 必填 | 语料文件路径，支持 `.epub`、`.docx`、`.txt`、`.srt`、`.ass` 及常见 Galgame 脚本文本 |
 | `chunk_chars` | int | `60000` | 单分片目标字数 |
 | `quote_open` | list | `["“", "「", "『"]` | 台词前引号（建议仅保留书内实际使用的符号） |
 | `quote_close` | list | `["”", "」", "』"]` | 台词后引号（需与 `quote_open` 配对） |
-| `person` | string | `"third"` | 叙述人称（`"first"` / `"third"`），注入提示词供模型对齐 |
+| `person` | string | `"third"` | 叙述人称（`"first"` / `"third"`），注入提示词并用于 `11_verify.py` 视点分桶参考 |
 | `protagonist` | string | `""` | 主角名称 |
 | `vol_unit_word` | string | `"卷"` | 二层归纳单位（如：卷、章、篇、ARC） |
-| `names` | list | `[]` | 角色名列表，用于台词归属统计、人物档案与纯文风脱敏 |
+| `names` | list | `[]` | 角色名列表，用于台词归属统计、人物档案与纯文风脱敏（可用 `06b_suggest_entities.py` 自动扫描候选） |
 | `aliases` | object | `{}` | 角色别名映射 `{"主名": ["别名1", "昵称2"]}`，归属统计自动合并到主名 |
+| `stylefit_dir` | string | `"config/stylefit"` | 文风规则目录或内置预设简称：`general` / `modern` / `fantasy` / `tieba`（模板默认推荐 `"general"`），也支持自定义相对/绝对目录 |
 | `bans_file` | string | `"config/bans.md"` | 负向禁区规则文件路径（相对仓库根或绝对路径），每本书建议指向私有文件避免污染仓库 |
 | `drop_headings` | list | `["简介", "制作信息", "封面及彩页"]` | 抽取阶段直接丢弃的无正文标题 |
+| `drop_builtin_meta` | bool | `true` | EPUB 抽取时自动剔除版权页、奥付、问卷、目次、后记、访谈等内置非正文页 |
+| `drop_file_patterns` | list | `[]` | 额外按 EPUB 内部文件路径正则丢弃的文件列表 |
+| `drop_text_patterns` | list | `[]` | 额外按页首正文正则丢弃的非正文页列表 |
+| `drop_lines` | list | `[]` | 精确匹配的孤立噪声行列表 |
+| `drop_line_patterns` | list | `[]` | 按正则剔除的噪声行列表（如 `"^Piece\\s+of\\s*[:：]"`、水印/页眉行） |
+| `strip_before_first_heading` | bool | `false` | 为 `true` 时丢弃首个标题之前的扉页/序言杂项 |
+| `strip_footnotes` | bool | `false` | 为 `true` 时清理正文内的尾注/脚注标记与注释行 |
 | `style_only` | bool | `false` | 为 `true` 时默认走纯文风蒸馏模式，剥离原书剧情绑定 |
-| `anonymize` | bool | `false` | 为 `true` 时将摘录中的角色名脱敏为「某甲/某乙……」，`【条目框】` 替换为「某技能/条目」 |
+| `anonymize` | bool | `false` | 为 `true` 时对角色名、专名与设定框执行脱敏替换 |
+| `anonymize_style` | string | `"neutral"` | 脱敏命名风格：`neutral`（`某甲/某乙/某丙`）或 `names`（自然假名如 `林远/苏晴/陈默`，减少代称违和感） |
+| `anonymize_terms` | object | `{}` | 专名脱敏映射 `{"原书地名/学校/组织": "某地"}`，防止原创写作带出原书世界观专名 |
+| `single_char_names` | list/object | `[]` | 单字人名安全脱敏配置（如 `["朋", "梓"]` 或带上下文规则的字典），避免误伤普通汉字词语 |
 | `budget` | object | 见下文 | 容量预算、估算 Token 与例子/摘要占比控制 |
 | `hard_settings` | list | `[]` | 注入《整书总结》开头的硬设定条目（建议 5-10 条） |
 | `if_points` | list | `[]` | 注入《整书总结》开头的 IF 分歧点条目 |
@@ -101,19 +112,29 @@ cp config/project.example.json config/project.json
 
 ---
 
-## 3. 文风统计规则：`config/stylefit/*.json`
+## 3. 分题材文风统计预设：`stylefit_dir`
 
-用于指导 `stylefit/build_index.py` 与 `09_build_examples.py` 提取搭配、描写与专项摘录：
+在 `config/project.json` 中设置 `"stylefit_dir"` 即可一键切换题材预设（无需手动改 JSON），也可复制任意预设目录定制私有词典：
+
+| 预设简称 / 目录 | 对应目录 | 适用题材 |
+|---|---|---|
+| `general` | `config/stylefit_general/` | **通用文学 / 现实叙事（零奇幻/系统偏置）**：覆盖冲突争执、内心转折、环境光影、动作细节与对话日常 |
+| `modern` | `config/stylefit_modern/` | **现代都市 / 校园 / 日常 / 恋爱轻小说**：内置手机/简讯/车站/咖啡/雨/夕阳/视线回避/低语等高频表达 |
+| `fantasy` | `config/stylefit_fantasy/` | **奇幻 / 异世界 / 战斗 / 系统面板**：覆盖武器交锋、施法魔力、公会小队、迷宫探索与系统数值 |
+| `tieba` | `config/stylefit_tieba/` | **贴吧 / 群聊 / 口语吐槽语料** |
+| *(缺省兼容)* | `config/stylefit/` | 保留旧版默认规则目录，向后兼容已有项目 |
+
+### 预设目录内的 7 个 JSON 文件
 
 | 配置文件 | 数据格式 | 用途 |
 |---|---|---|
-| `colloc.json` | `{"动作概念": ["候选说法", ...]}` | 统计 18 类通用高频动作搭配；0 次出现项标记为搭配雷区 |
+| `colloc.json` | `{"动作概念": ["候选说法", ...]}` | 统计高频动作/神态/方位搭配；0 次出现项标记为搭配雷区 |
 | `words.json` | `{"概念分类": ["词汇列表", ...]}` | 统计词汇分布；0 次出现项列入零频黑名单 |
-| `intents.json` | `{"意图分类": "匹配正则"}` | 抽取 18 类描写意图完整句群样本 |
-| `scenes.json` | `{"场景名称": ["特征词", ...]}` | 构建场景词典（含常用/少用/禁用三档） |
+| `intents.json` | `{"意图分类": "匹配正则"}` | 抽取各类描写意图的完整句群样本 |
+| `scenes.json` | `{"场景名称": ["特征词", ...]}` | 构建场景词典（含常用 / 少用 / 禁用三档） |
 | `topics.json` | `{"主题名": "匹配正则"}` | `09_build_examples.py` 专项摘录主题（默认模式下使用） |
-| `scene_rules.json` | `{"场景名": "匹配正则"}` | 可选，自定义 `build_index.py` 划分场景片段的规则 |
-| `funcs.json` | `{"功能分类": "匹配正则"}` | 可选，覆盖默认台词功能桶分类规则 |
+| `scene_rules.json` | `{"场景名": "匹配正则"}` | 指导 `build_index.py` 按题材切分场景片段（未命中归入「日常」） |
+| `funcs.json` | `{"功能分类": "匹配正则"}` | 覆盖默认台词功能桶分类规则（按声明顺序首次命中归桶） |
 
 > **说明**：JSON 中以 `_` 开头的键会被忽略，可用作注释。
 
@@ -122,4 +143,4 @@ cp config/project.example.json config/project.json
 ## 4. 提示词模板与负向禁区
 
 - `config/prompts/stage1_note.txt`、`stage2_volume.txt`、`meta_*.txt`：一/二层摘要与元章节提示词（新增 `meta_*.txt` 会被 `05_run_volumes.py --meta` 自动发现）。
-- `config/bans.md`：通用反 AI 腔与句式纪律模板。为具体小说定制角色/设定禁区时，建议在 `config/project.json` 中通过 `"bans_file"` 指向私有文件，避免公开提交具体作品设定。
+- `config/bans.md`：通用反 AI 腔、动作视点纪律与**六大结构/修辞型 AI 腔**正反对比模板。为具体小说定制角色/设定禁区时，建议在 `config/project.json` 中通过 `"bans_file"` 指向私有文件，避免公开提交具体作品设定。
