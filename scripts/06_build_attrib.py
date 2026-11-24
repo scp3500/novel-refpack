@@ -100,15 +100,27 @@ def make_attributor(names, verbs=VERBS, aliases=None):
             return nm[0]
         return None
 
+    def _strip_quotes(ln):
+        qms = C.iter_quotes(ln)
+        if not qms:
+            return ln
+        parts, last = [], 0
+        for qm in qms:
+            parts.append(ln[last:qm.start])
+            parts.append("｜")
+            last = qm.end
+        parts.append(ln[last:])
+        return "".join(parts)
+
     def same_line(ln):
         """(有没有同行叙述, 主语)"""
-        ms = list(C.QUOTE.finditer(ln))
-        outside = C.QUOTE.sub("｜", ln)
+        qms = C.iter_quotes(ln)
+        outside = _strip_quotes(ln)
         if not CJK.search(outside):
             return False, None
         who = subject_of(outside)
-        if who is None:
-            lead = ln[:ms[0].start()].rstrip()
+        if who is None and qms:
+            lead = ln[:qms[0].start].rstrip()
             if lead.endswith(COLON) and len(names_in(outside)) == 1:
                 who = lone_name(lead)
         return True, who
@@ -120,7 +132,7 @@ def make_attributor(names, verbs=VERBS, aliases=None):
         if j < 0:
             return False, None
         pv = lines[j].strip()
-        if pv.startswith("#") or C.QUOTE.search(pv):
+        if pv.startswith("#") or C.iter_quotes(pv):
             return False, None
         if pv.endswith(COLON):
             return True, subject_of(pv) or lone_name(pv)
@@ -132,7 +144,7 @@ def make_attributor(names, verbs=VERBS, aliases=None):
         if i + 1 >= len(lines):
             return None
         nx = lines[i + 1].strip()
-        if not nx or nx.startswith("#") or nx.endswith(COLON) or C.QUOTE.search(nx):
+        if not nx or nx.startswith("#") or nx.endswith(COLON) or C.iter_quotes(nx):
             return None
         m = subj_re.match(mask(nx))
         if m:
@@ -150,25 +162,54 @@ def make_attributor(names, verbs=VERBS, aliases=None):
             return who
         return next_line(lines, i)
 
+    script_line_re = re.compile(r"^\s*【([^】\n]{1,12})】\s*(.+)$")
+
     def attribute(lines):
         pairs = []
         for i, ln in enumerate(lines):
-            qs = C.QUOTE.findall(ln)
-            if not qs:
+            # 剧本/字幕格式兜底：【角色名】台词
+            sm = script_line_re.match(ln)
+            if sm:
+                raw_who = sm.group(1).strip()
+                matched = names_in(raw_who)
+                if len(matched) == 1:
+                    body = sm.group(2).strip()
+                    qms_s = C.iter_quotes(body)
+                    txt = qms_s[0].inner.strip() if qms_s else body
+                    if len(txt) >= 2:
+                        pairs.append({"who": matched[0], "text": txt})
+                    continue
+
+            ms = C.iter_quotes(ln)
+            if not ms:
                 continue
             who = speaker(lines, i)
-            if not who:
-                continue
-            for q in qs:
-                q = q.strip()
-                if len(q) >= 2:
-                    pairs.append({"who": who, "text": q})
+            if who:
+                for m in ms:
+                    q = m.inner.strip()
+                    if len(q) >= 2:
+                        pairs.append({"who": who, "text": q})
+            elif len(ms) > 1:
+                # 经典白话长段多轮对白（A道：“…”B道：“…”）：按引号前紧邻叙述片段逐句判定
+                for k, m in enumerate(ms):
+                    prev_end = ms[k - 1].end if k > 0 else 0
+                    seg = re.split(r"[。！？]", ln[prev_end:m.start])[-1]
+                    if not CJK.search(seg):
+                        continue
+                    w = subject_of(seg)
+                    if w is None and seg.rstrip().endswith(COLON) and len(names_in(seg)) == 1:
+                        w = lone_name(seg)
+                    if w:
+                        q = m.inner.strip()
+                        if len(q) >= 2:
+                            pairs.append({"who": w, "text": q})
         return pairs
 
     return attribute
 
 
 def main():
+    textio.ensure_utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--names", default=None, help="覆盖 config 里的角色名，逗号分隔")

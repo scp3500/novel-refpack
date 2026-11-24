@@ -26,10 +26,21 @@ DEFAULTS = {
     "aliases": {},                  # {"主名": ["别名1", "昵称2"]}，归属统计时并入主名
     "bans_file": "",                # 可选，自定义禁区 markdown（相对仓库根或绝对路径）
     "drop_headings": ["简介", "制作信息", "封面及彩页"],
+    "drop_builtin_meta": True,      # EPUB 抽取时自动剔除版权/奥付/问卷/目次/后记/访谈等非正文页
+    "drop_file_patterns": [],       # 额外按 EPUB 内部路径正则丢弃的文件
+    "drop_text_patterns": [],       # 额外按页首正文正则丢弃的非正文页
+    "drop_lines": [],               # 精确匹配的孤立噪声行
+    "drop_line_patterns": [],       # 正则匹配的噪声行（如 "^Piece\\s+of\\s*[:：]"）
+    "strip_before_first_heading": False,
+    "strip_footnotes": False,
     "protagonist": "",
     "vol_unit_word": "卷",          # 二层归纳的单位叫法：卷 / 章 / 篇 / ARC
     "style_only": False,            # True 时仅蒸馏通用文风，剥离原书剧情与角色绑定
     "anonymize": False,             # True 时将角色名/设定框脱敏为中性代称（甲/乙/丙）
+    "anonymize_style": "neutral",   # neutral（某甲/某乙）或 names（林远/苏晴/陈默）
+    "anonymize_terms": {},          # {"原书地名/学校/专名": "某高中"} 脱敏替换映射
+    "single_char_names": [],        # 单字人名安全脱敏（如 ["朋", "梓"] 或 {"朋": {...}}）
+    "stylefit_dir": "config/stylefit",  # 文风规则目录或预设名（general/modern/fantasy/tieba）
     "budget": {
         "preset": "standard",       # compact(60KB) / standard(150KB) / rich(300KB) / full(不裁剪)
         "target_kb": None,          # 显式指定总体积 KB（覆盖 preset）
@@ -62,6 +73,7 @@ def _merge(base, over):
 
 
 def load(path=None, need_source=False):
+    textio.ensure_utf8_stdio()
     p = path or os.environ.get("REFPACK_CONFIG") or CONFIG
     if not os.path.isfile(p):
         if os.path.isfile(EXAMPLE):
@@ -92,7 +104,8 @@ def load(path=None, need_source=False):
     corpus.set_quotes(cfg.get("quote_open"), cfg.get("quote_close"))
 
     for k, v in (cfg.get("paths") or {}).items():
-        cfg["paths"][k] = v if os.path.isabs(v) else os.path.join(ROOT, v)
+        p_full = v if os.path.isabs(v) else os.path.join(ROOT, v)
+        cfg["paths"][k] = os.path.normpath(p_full)
     return cfg
 
 
@@ -100,16 +113,34 @@ def resolve_bans_file(cfg):
     """定位禁区说明文件：优先 project.json 的 bans_file，其次 config/bans.md。"""
     custom = (cfg.get("bans_file") or "").strip()
     if custom:
-        p = custom if os.path.isabs(custom) else os.path.join(ROOT, custom)
+        p = os.path.normpath(custom if os.path.isabs(custom) else os.path.join(ROOT, custom))
         if os.path.isfile(p):
             return p
-    default = os.path.join(ROOT, "config", "bans.md")
+    default = os.path.normpath(os.path.join(ROOT, "config", "bans.md"))
     return default if os.path.isfile(default) else None
+
+
+STYLEFIT_PRESETS = ("general", "modern", "fantasy", "tieba")
+
+
+def resolve_stylefit_dir(cfg):
+    """定位文风规则目录：支持预设简称（general/modern/fantasy/tieba）或自定义路径，回退 config/stylefit。"""
+    custom = (cfg.get("stylefit_dir") or "").strip()
+    if custom:
+        low = custom.lower()
+        if low in STYLEFIT_PRESETS:
+            preset_dir = os.path.normpath(os.path.join(ROOT, "config", "stylefit_" + low))
+            if os.path.isdir(preset_dir):
+                return preset_dir
+        p = os.path.normpath(custom if os.path.isabs(custom) else os.path.join(ROOT, custom))
+        if os.path.isdir(p):
+            return p
+    return os.path.normpath(os.path.join(ROOT, "config", "stylefit"))
 
 
 def artifact(cfg, name):
     """work/ 下的单个文件，如 manifest.json / attrib.json / all_notes.md。"""
-    return os.path.join(cfg["paths"]["work"], name)
+    return os.path.normpath(os.path.join(cfg["paths"]["work"], name))
 
 
 def vol_notes(cfg, with_missing=False):
@@ -129,6 +160,7 @@ def vol_notes(cfg, with_missing=False):
 
 
 def load_chat_config(path=None):
+    textio.ensure_utf8_stdio()
     p = path or os.environ.get("CHAT_CONFIG")
     if not p:
         cand = os.path.join(ROOT, "config", "chat.json")
@@ -143,7 +175,7 @@ def load_chat_config(path=None):
 
 def chat_work_dir(cfg=None):
     w = (cfg or {}).get("work_dir") or "work"
-    return w if os.path.isabs(w) else os.path.join(ROOT, w)
+    return os.path.normpath(w if os.path.isabs(w) else os.path.join(ROOT, w))
 
 
 def prompt(cfg, stem, **kw):

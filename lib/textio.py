@@ -2,10 +2,26 @@
 """文本读写与结构解析。全部标准库，无依赖。"""
 import os
 import re
+import sys
 import json
 import uuid
 
 ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "latin-1")
+
+
+def ensure_utf8_stdio():
+    """Windows 控制台 UTF-8 温和兜底，减少忘加 -X utf8 时的 GBK 报错。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        reconf = getattr(stream, "reconfigure", None)
+        if callable(reconf):
+            try:
+                enc = (getattr(stream, "encoding", "") or "").lower()
+                if enc and "utf" not in enc:
+                    reconf(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
 HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
 
